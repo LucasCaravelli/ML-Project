@@ -4,7 +4,7 @@ This is the working document for the six of us building the project. It is
 not a public README. It explains what we are building, why the repo is shaped
 the way it is, and how we are going to work across the three phases leading up
 to the experiment freeze.
-
+(Test)
 ## What we are actually doing
 
 We are testing whether a cheap, query-only classifier can pick the right
