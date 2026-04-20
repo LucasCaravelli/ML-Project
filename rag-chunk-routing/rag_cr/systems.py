@@ -1,0 +1,1 @@
+# TODO: Implement one system class per evaluated configuration (fixed-size, fusion, oracle, router), each exposing the same answer-a-query interface so pipeline.py can treat them uniformly.

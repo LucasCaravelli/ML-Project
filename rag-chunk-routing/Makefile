@@ -1,0 +1,1 @@
+# TODO: Define one-command targets for each pipeline stage (indices, qa, oracle, baselines, fusion, router, frontier, all, clean) and encode the dependency order between them.

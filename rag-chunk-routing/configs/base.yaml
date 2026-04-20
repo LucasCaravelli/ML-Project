@@ -1,0 +1,1 @@
+# TODO: Centralize every hyperparameter used anywhere in the pipeline (chunking, embedding, retrieval, generation, QA generation, router). No default values should live in Python code.

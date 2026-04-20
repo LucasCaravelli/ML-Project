@@ -1,0 +1,1 @@
+# TODO: Implement deterministic evaluation metrics (exact match, token-level F1, passage-overlap faithfulness, retrieval cost in tokens). No LLM-as-judge scoring.

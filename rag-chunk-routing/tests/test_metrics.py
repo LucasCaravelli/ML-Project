@@ -1,0 +1,1 @@
+# TODO: Verify EM and F1 scoring against a set of hand-crafted prediction/gold pairs with known expected scores.

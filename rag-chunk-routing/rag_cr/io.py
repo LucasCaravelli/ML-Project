@@ -1,0 +1,1 @@
+# TODO: Provide JSONL read/write helpers and path resolution for artifacts and results. No data transformations belong here.

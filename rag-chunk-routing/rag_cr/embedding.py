@@ -1,0 +1,1 @@
+# TODO: Implement text-to-vector embedding using the configured sentence-transformer model.

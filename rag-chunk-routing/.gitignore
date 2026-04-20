@@ -1,0 +1,40 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+
+# Virtual environments
+.venv/
+venv/
+env/
+
+# Editors and OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# Notebook checkpoints
+.ipynb_checkpoints/
+
+# Artifacts (regeneratable from data/ + code; never committed)
+artifacts/
+
+# Results (large per-run outputs ignored; small summaries committed)
+results/runs/*/predictions.jsonl
+results/runs/*/log.txt
+
+# API keys for QA generation (OpenAI, Anthropic) or Ollama endpoints must never
+# be committed. Keep them in .env (loaded via python-dotenv or similar).
+.env
+.env.local
+*.key
+
+# Not relevant for this project but cheap to include in case someone experiments with packaging.
+build/
+dist/
+*.egg
