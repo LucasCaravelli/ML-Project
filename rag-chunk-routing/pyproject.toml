@@ -1,0 +1,43 @@
+[project]
+name = "rag-chunk-routing"
+version = "0.0.1"
+description = "Per-query chunk-size routing for retrieval-augmented generation."
+requires-python = ">=3.11"
+dependencies = [
+    "numpy",
+    "pyyaml",
+    "faiss-cpu",
+    "sentence-transformers",
+    "scikit-learn",
+    "lightgbm",
+    "requests",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest",
+    "ruff",
+    "black",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["rag_cr"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B"]
+
+[tool.black]
+line-length = 100
+target-version = ["py311"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-ra"

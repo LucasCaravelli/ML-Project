@@ -1,0 +1,1 @@
+TODO: Define the prompt that instructs a large LLM to generate a QA pair from a source chunk, conditioned on the target question type (factoid, multi-hop, synthesis).

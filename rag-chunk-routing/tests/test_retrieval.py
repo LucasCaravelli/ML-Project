@@ -1,0 +1,1 @@
+# TODO: Verify that retrieval returns the expected number of chunks in monotonically-decreasing score order and that returned chunk IDs are consistent with the index.

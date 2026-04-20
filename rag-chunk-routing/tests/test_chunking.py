@@ -1,0 +1,1 @@
+# TODO: Verify that chunks cover the corpus without gaps or duplicates and that chunk lengths respect the target size within a reasonable tolerance.
