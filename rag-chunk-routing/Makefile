@@ -1,16 +1,20 @@
 PY := python
 CONFIG := configs/base.yaml
 
-.PHONY: all indices qa oracle baselines fusion router frontier clean test lint format
+.PHONY: all indices qa qa-generate qa-validate oracle baselines fusion router frontier clean test lint format
 
 all: frontier
 
 indices:
 	$(PY) experiments/build_indices.py --config $(CONFIG)
 
-qa: indices
+qa-generate: indices
 	$(PY) experiments/generate_qa.py --config $(CONFIG)
+
+qa-validate:
 	$(PY) experiments/validate_qa.py --config $(CONFIG)
+
+qa: qa-generate qa-validate
 
 oracle: qa
 	$(PY) experiments/compute_oracle.py --config $(CONFIG)
