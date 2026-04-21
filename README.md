@@ -165,6 +165,65 @@ The canonical order is encoded in the `Makefile`. Each target maps to one
 script in `experiments/`. A full rebuild from the raw corpus is `make all`.
 Individual stages can be rerun in isolation; see the `Makefile` for the list.
 
+If you are on Windows without `make` installed, every target is a one-line
+wrapper around a `python experiments/<script>.py --config configs/base.yaml`
+call — read the `Makefile` and run the underlying command directly.
+
+### QA generation and validation
+
+The QA lane runs in two stages: synthetic generation against OpenAI, then
+human accept/reject/edit review. Both are resumable.
+
+**One-time setup.** Copy `rag-chunk-routing/.env.example` to
+`rag-chunk-routing/.env` and fill in your `OPENAI_API_KEY`. The `.env` file
+is gitignored. Generation uses the model and temperatures pinned in
+`configs/base.yaml` under `qa.generation` (currently `gpt-4.1-mini`).
+
+**Generate.** From `rag-chunk-routing/`:
+
+```
+make qa-generate                    # writes qa.initial_batch_size rows (150)
+python experiments/generate_qa.py   # equivalent without make
+python experiments/generate_qa.py --limit 5   # small smoke run
+```
+
+`generate_qa` refuses to overwrite a non-empty `artifacts/qa/qa_raw.jsonl`.
+Pass `--force` to replace it, or `make clean-qa` (`rm -rf artifacts/qa`)
+first. Output is stratified by `qa.type_distribution` (factoid / multihop /
+synthesis) using the largest-remainder method, so counts sum exactly to the
+requested batch size and the type mix is deterministic for a given seed.
+
+**Validate.** From `rag-chunk-routing/`:
+
+```
+make qa-validate                    # interactive review of qa_raw.jsonl
+python experiments/validate_qa.py   # equivalent without make
+```
+
+Controls per pair: `a` accept, `r` reject, `e` edit question/answer then
+accept, `q` quit and save progress. Decisions are appended to
+`qa_validated.jsonl` (accepts and edits) or `qa_rejected.jsonl` (rejects),
+so re-running picks up where you stopped without re-prompting on already
+decided pairs.
+
+**Outputs.** All three files live in `artifacts/qa/` and are committed to
+the repo (the only carve-outs to `artifacts/` being gitignored, because
+hand-validated QA is not rebuildable):
+
+- `qa_raw.jsonl` — the unfiltered LLM batch. Schema: `qa_id`, `question`,
+  `answer`, `source_chunk_id`, `type`, `validated=False`.
+- `qa_validated.jsonl` — pairs the human accepted (possibly edited). Same
+  schema with `validated=True`. **This is the file downstream consumers
+  read.**
+- `qa_rejected.jsonl` — sidecar of `{"qa_id": ...}` so re-runs of validation
+  skip already rejected items. Not consumed downstream.
+
+**For the downstream integrator.** Read `artifacts/qa/qa_validated.jsonl`
+via `rag_cr.io.read_jsonl` (or `get_qa_validated_path(artifacts_dir)`).
+Each row matches `rag_cr.types.QAPair`. Filter on `validated=True` if you
+want to be defensive, though every row in this file is validated by
+construction.
+
 ## What to do if you are stuck
 
 Ask on Whatsapp rather than branching away on your own. The cost of a fifteen-
