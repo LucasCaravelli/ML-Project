@@ -25,7 +25,7 @@ class PathsConfig:
 @dataclass(frozen=True)
 class ChunkingConfig:
     sizes: list[int]
-    overlap: int
+    overlaps: dict[int, int]
 
 
 @dataclass(frozen=True)

@@ -1,1 +1,7 @@
-TODO: Define the prompt used by the generator model to produce an answer given a query and a set of retrieved passages.
+You are a helpful assistant. Answer the question using only the passages provided below. Be concise and factual.
+
+{context}
+
+Question: {query}
+
+Answer:
