@@ -36,10 +36,20 @@ generation:
 qa:
   target_count: 400
   initial_batch_size: 150
+  source_chunk_size: 512
+  neighbor_window: 1
   type_distribution:
     factoid: 0.40
     multihop: 0.35
     synthesis: 0.25
+  generation:
+    provider: openai
+    model_name: gpt-4.1-mini
+    question_temperature: 0.4
+    answer_temperature: 0.1
+    max_tokens: 400
+    request_timeout_s: 60
+    max_retries: 3
 
 router:
   feature_sets: [tfidf, minilm, handcrafted]
@@ -48,4 +58,5 @@ router:
 
 prompts:
   qa_generation: prompts/qa_generation.txt
+  qa_answer: prompts/qa_answer.txt
   answer: prompts/answer.txt

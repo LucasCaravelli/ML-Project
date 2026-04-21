@@ -7,10 +7,13 @@ dependencies = [
     "numpy",
     "pyyaml",
     "faiss-cpu",
+    "transformers",
     "sentence-transformers",
     "scikit-learn",
     "lightgbm",
     "requests",
+    "openai>=1.40",
+    "python-dotenv>=1.0",
 ]
 
 [project.optional-dependencies]

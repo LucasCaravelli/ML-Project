@@ -1,7 +1,25 @@
-You are a helpful assistant. Answer the question using only the passages provided below. Be concise and factual.
+You are answering a question for a retrieval-augmented generation system.
 
-{context}
+Use only the retrieved context below. Do not use outside knowledge. If the retrieved context does not provide enough information to answer the question cleanly and directly, say exactly: NOT_ENOUGH_INFORMATION
 
-Question: {query}
+Question:
+<<<
+{question}
+>>>
 
-Answer:
+Retrieved context:
+<<<
+{retrieved_context}
+>>>
+
+Instructions:
+1. Answer using only the retrieved context.
+2. Do not add background knowledge, assumptions, or speculation.
+3. If the answer is not clearly supported by the retrieved context, output exactly: NOT_ENOUGH_INFORMATION
+4. Keep the answer concise and directly responsive to the question.
+5. For fact-based questions, prefer short exact answers when supported.
+6. For questions requiring synthesis, give a brief integrated answer grounded in the retrieved context.
+7. Do not mention the context, passage, or retrieval process.
+8. Do not hedge with phrases like "Based on the context" or "The passage says".
+
+Output only the answer text, with no quotation marks, JSON, or extra commentary.

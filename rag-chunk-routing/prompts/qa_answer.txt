@@ -1,0 +1,49 @@
+You are producing the ground-truth ANSWER for a retrieval-augmented generation benchmark.
+
+This answer will be used as the gold label for evaluating smaller retrieval systems. Therefore, it must be fully supported by the provided text, concise, and phrased as canonically as possible for reliable comparison.
+
+Question type: {question_type}
+
+Expected answer shape by type (HARD caps — count the words):
+- factoid: at most 5 words. An extractive span lifted from the PRIMARY chunk. Not a sentence.
+- multihop: at most 15 words. A short phrase combining facts across chunks. Not a sentence.
+- synthesis: at most 25 words. A tight phrase (not a paragraph) integrating facts across chunks. No framing words like "The study shows", "According to", "The text describes".
+
+General shape rules for all types:
+- Output the SHORTEST phrase fully supported by the text that answers the question.
+- Prefer noun phrases, numeric values, named entities, or short predicates. Avoid full sentences.
+- Strip filler, hedging, articles where natural, and any wording not required to answer the question.
+- Use wording taken directly from the provided text wherever possible. Reuse the exact terms, names, numbers, and phrasing that appear in the PRIMARY and NEIGHBOR chunks. Do not paraphrase, rename, or translate into synonyms. Only deviate from the source wording when strictly necessary to merge facts across chunks.
+
+Question:
+<<<
+{question}
+>>>
+
+PRIMARY chunk:
+<<<
+{primary_chunk}
+>>>
+
+NEIGHBOR chunks (may be empty for factoid):
+<<<
+{neighbor_chunks}
+>>>
+
+Hard requirements:
+1. The answer must be fully supported by the provided text only. Do not add facts, interpretations, background context, or wording that is not justified by the text.
+2. Do not hedge or add meta-commentary. Produce only the answer.
+3. If the text does not unambiguously support a clean answer, respond with: {{"skip": true, "reason": "<short reason>"}}.
+4. Obey the word caps above strictly. If you cannot fit a correct answer within the cap, respond with {{"skip": true, "reason": "answer cannot fit the word cap"}} rather than exceeding it.
+5. Do not include unnecessary details beyond what the question asks.
+6. For factoid, prefer the exact wording from the PRIMARY chunk unless minor normalization improves clarity.
+7. For multihop, the answer must reflect information from the PRIMARY chunk and at least one NEIGHBOR chunk; do not answer using a single chunk alone.
+8. For synthesis, write a focused integrated phrase, not a paragraph or generic summary.
+9. Do not invent names, numbers, entities, relations, or causal claims.
+10. If multiple phrasings are supported, choose the shortest one that is still canonical and unambiguous.
+
+Output format — respond with a single JSON object on one line, no prose, no code fences:
+{{"answer": "<the answer>"}}
+
+Or, if the text does not support a clean answer:
+{{"skip": true, "reason": "<short reason>"}}
