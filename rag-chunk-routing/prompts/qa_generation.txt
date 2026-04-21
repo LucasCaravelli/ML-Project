@@ -1,1 +1,44 @@
-TODO: Define the prompt that instructs a large LLM to generate a QA pair from a source chunk, conditioned on the target question type (factoid, multi-hop, synthesis).
+You are generating a single high-quality QUESTION for a retrieval-augmented generation benchmark. 
+
+Later, smaller models will try to answer your question by retrieving chunks from the corpus, so the question must be answerable ONLY from the provided source text — do not rely on outside knowledge.
+
+Do NOT write the answer. Only produce the question. The answer will be generated separately in a follow-up step.
+
+Question type: {question_type}
+
+Type definitions (note the expected ANSWER length — questions must be phrased so the answer fits):
+- factoid: a short, self-contained question whose answer is a single fact (name, date, number, short phrase) explicitly stated in the PRIMARY chunk. The answer must be extractable as a span of at most 5 words.
+- multihop: a question that requires combining two or more distinct facts across the PRIMARY chunk and the NEIGHBOR chunks. The answer must be at most 15 words and can only be derived by chaining facts.
+- synthesis: a question that requires integrating information spread across the PRIMARY and NEIGHBOR chunks. The answer must be at most 25 words (a tight integrated phrase, not a paragraph). The question should require at least two distinct supporting statements, including one from the PRIMARY chunk.
+
+Prefer question forms that invite short answers: "What / Which / Who / When / How many / How much". Avoid "How does X work", "Why is Y important", "Describe ...", or other open-ended forms that invite prose.
+
+PRIMARY chunk (the question MUST be anchored here):
+<<<
+{primary_chunk}
+>>>
+
+NEIGHBOR chunks (additional context for multihop/synthesis; may be empty for factoid):
+<<<
+{neighbor_chunks}
+>>>
+
+Hard requirements:
+1. The question must be fully answerable from the provided text. If the chunk is too thin or generic for a clean {question_type} question, respond with: {{"skip": true, "reason": "<short reason>"}}
+2. Do not ask meta-questions about the text itself ("What does this passage discuss?", "What is the main topic?"). Ask about the content.
+3. Do not leak the answer phrasing inside the question.
+4. Prefer concrete, specific questions over broad or generic ones.
+5. Avoid ambiguous references such as unclear pronouns, “the method,” “the model,” or “this result” unless uniquely identifiable from the question alone.
+6. Do not invent names, numbers, entities, relationships, or cross-chunk links that are not supported by the text.
+7. For factoid, the answer must be found in the PRIMARY chunk alone.
+8. For multihop, the answer must NOT be recoverable from the PRIMARY chunk alone or from any single chunk alone.
+9. For synthesis, do not ask for an open-ended opinion or a generic summary; ask for a focused integration of specific content in the provided text whose answer fits in at most 25 words.
+10. Keep the question under 35 words.
+11. The question must be phrased so that a correct answer fits within the answer word cap for its type (factoid ≤ 5 words, multihop ≤ 15 words, synthesis ≤ 25 words). If no such question is possible for this chunk, skip.
+12. Reuse wording from the provided text where possible. When referring to entities, methods, numbers, or named concepts, prefer the exact terms used in the PRIMARY and NEIGHBOR chunks rather than paraphrases or synonyms. This keeps the question lexically anchored to the corpus.
+
+Output format — respond with a single JSON object on one line, no prose, no code fences:
+{{"question": "<the question>"}}
+
+Or, if the chunk is unsuitable:
+{{"skip": true, "reason": "<short reason>"}}
