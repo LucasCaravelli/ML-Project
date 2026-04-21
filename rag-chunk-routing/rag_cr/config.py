@@ -51,10 +51,24 @@ class GenerationConfig:
 
 
 @dataclass(frozen=True)
+class QAGenerationConfig:
+    provider: str
+    model_name: str
+    question_temperature: float
+    answer_temperature: float
+    max_tokens: int
+    request_timeout_s: int
+    max_retries: int
+
+
+@dataclass(frozen=True)
 class QAConfig:
     target_count: int
     initial_batch_size: int
+    source_chunk_size: int
+    neighbor_window: int
     type_distribution: dict[str, float]
+    generation: QAGenerationConfig
 
 
 @dataclass(frozen=True)
@@ -67,6 +81,7 @@ class RouterConfig:
 @dataclass(frozen=True)
 class PromptsConfig:
     qa_generation: Path
+    qa_answer: Path
     answer: Path
 
 
@@ -108,10 +123,18 @@ def load_config(config_path: str | Path = "configs/base.yaml") -> Config:
         embedding=EmbeddingConfig(**raw["embedding"]),
         retrieval=RetrievalConfig(**raw["retrieval"]),
         generation=GenerationConfig(**raw["generation"]),
-        qa=QAConfig(**raw["qa"]),
+        qa=QAConfig(
+            target_count=raw["qa"]["target_count"],
+            initial_batch_size=raw["qa"]["initial_batch_size"],
+            source_chunk_size=raw["qa"]["source_chunk_size"],
+            neighbor_window=raw["qa"]["neighbor_window"],
+            type_distribution=raw["qa"]["type_distribution"],
+            generation=QAGenerationConfig(**raw["qa"]["generation"]),
+        ),
         router=RouterConfig(**raw["router"]),
         prompts=PromptsConfig(
             qa_generation=Path(raw["prompts"]["qa_generation"]),
+            qa_answer=Path(raw["prompts"]["qa_answer"]),
             answer=Path(raw["prompts"]["answer"]),
         ),
     )
