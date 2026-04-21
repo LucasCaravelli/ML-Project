@@ -63,7 +63,7 @@ def _targets_from_distribution(n: int, dist: dict[str, float]) -> dict[str, int]
 
 
 def _call_openai(prompt: str, cfg: QAGenerationConfig, temperature: float) -> str:
-    from openai import OpenAI
+    from openai import AuthenticationError, OpenAI
 
     api_key = os.environ.get("OPENAI_API_KEY")
     if not api_key:
@@ -83,6 +83,9 @@ def _call_openai(prompt: str, cfg: QAGenerationConfig, temperature: float) -> st
                 response_format={"type": "json_object"},
             )
             return resp.choices[0].message.content or ""
+        except AuthenticationError:
+            # Auth errors don't get better by retrying — fail fast.
+            raise
         except Exception as e:  # noqa: BLE001
             last_err = e
             backoff = 2**attempt
@@ -105,12 +108,45 @@ def _parse_response(raw: str) -> dict | None:
     return obj if isinstance(obj, dict) else None
 
 
+def _build_work_list(
+    targets: dict[str, int],
+    n_chunks: int,
+    rng: random.Random,
+) -> list[tuple[str, int]]:
+    """Build a round-robin interleaved work list of (type, chunk_idx) pairs.
+
+    Each type draws from its own shuffled view of chunk indices so the same
+    chunk isn't consistently paired with the same type across the batch, and
+    types interleave in the output so a reviewer sees a mix rather than a
+    block of factoids followed by a block of multihops.
+    """
+    per_type: dict[str, list[tuple[str, int]]] = {}
+    for qtype, count in targets.items():
+        shuffled = list(range(n_chunks))
+        rng.shuffle(shuffled)
+        per_type[qtype] = [(qtype, shuffled[i % n_chunks]) for i in range(count)]
+
+    iters = {qtype: iter(items) for qtype, items in per_type.items()}
+    work: list[tuple[str, int]] = []
+    while True:
+        progressed = False
+        for qtype in targets:
+            item = next(iters[qtype], None)
+            if item is not None:
+                work.append(item)
+                progressed = True
+        if not progressed:
+            break
+    return work
+
+
 def generate_qa(
     chunks_path: str | Path,
     qa_cfg: QAConfig,
     question_prompt_path: str | Path,
     answer_prompt_path: str | Path,
     limit: int | None = None,
+    seed: int | None = None,
 ) -> list[QAPair]:
     """Generate a stratified first-pass batch of synthetic QA pairs from chunks.
 
@@ -121,7 +157,16 @@ def generate_qa(
     Produces up to ``limit`` (or ``qa_cfg.initial_batch_size``) candidates,
     stratified by ``qa_cfg.type_distribution``. All pairs are returned with
     ``validated=False`` for downstream human review.
+
+    Pass ``seed`` for reproducible stratification and chunk selection.
     """
+    gen_cfg = qa_cfg.generation
+    if gen_cfg.provider != "openai":
+        raise ValueError(
+            f"Unsupported QA generation provider: {gen_cfg.provider!r}. "
+            "Only 'openai' is currently implemented."
+        )
+
     n = limit if limit is not None else qa_cfg.initial_batch_size
     chunks = cast(list[Chunk], read_jsonl(chunks_path))
     if not chunks:
@@ -132,18 +177,11 @@ def generate_qa(
     targets = _targets_from_distribution(n, qa_cfg.type_distribution)
     log.info("QA generation targets for n=%d: %s", n, targets)
 
-    indices = list(range(len(chunks)))
-    random.shuffle(indices)
+    rng = random.Random(seed)
+    work = _build_work_list(targets, len(chunks), rng)
 
-    work: list[tuple[str, int]] = []
-    cursor = 0
-    for qtype, count in targets.items():
-        for _ in range(count):
-            work.append((qtype, indices[cursor % len(indices)]))
-            cursor += 1
-
-    gen_cfg = qa_cfg.generation
     pairs: list[QAPair] = []
+    skipped_q = skipped_a = parse_err = missing_field = 0
     for i, (qtype, chunk_idx) in enumerate(work):
         primary = chunks[chunk_idx]
         neighbors = (
@@ -161,6 +199,7 @@ def generate_qa(
         q_raw = _call_openai(q_prompt, gen_cfg, gen_cfg.question_temperature)
         q_parsed = _parse_response(q_raw)
         if q_parsed is None:
+            parse_err += 1
             log.warning(
                 "Could not parse question response for chunk %s (type=%s)",
                 primary["chunk_id"],
@@ -168,6 +207,7 @@ def generate_qa(
             )
             continue
         if q_parsed.get("skip"):
+            skipped_q += 1
             log.info(
                 "Skipped chunk %s at question step (type=%s): %s",
                 primary["chunk_id"],
@@ -177,6 +217,7 @@ def generate_qa(
             continue
         question = q_parsed.get("question")
         if not question:
+            missing_field += 1
             log.warning(
                 "Question response missing 'question' field for chunk %s (type=%s): %r",
                 primary["chunk_id"],
@@ -196,6 +237,7 @@ def generate_qa(
         a_raw = _call_openai(a_prompt, gen_cfg, gen_cfg.answer_temperature)
         a_parsed = _parse_response(a_raw)
         if a_parsed is None:
+            parse_err += 1
             log.warning(
                 "Could not parse answer response for chunk %s (type=%s, question=%r)",
                 primary["chunk_id"],
@@ -204,6 +246,7 @@ def generate_qa(
             )
             continue
         if a_parsed.get("skip"):
+            skipped_a += 1
             log.info(
                 "Skipped at answer step (chunk=%s, type=%s, question=%r): %s",
                 primary["chunk_id"],
@@ -214,6 +257,7 @@ def generate_qa(
             continue
         answer = a_parsed.get("answer")
         if not answer:
+            missing_field += 1
             log.warning(
                 "Answer response missing 'answer' field for chunk %s (type=%s): %r",
                 primary["chunk_id"],
@@ -240,5 +284,20 @@ def generate_qa(
             qtype,
             primary["chunk_id"],
         )
+
+    type_counts = {t: 0 for t in targets}
+    for p in pairs:
+        type_counts[p["type"]] += 1
+    log.info(
+        "QA generation done: produced=%d/%d  by_type=%s  "
+        "skipped_q=%d skipped_a=%d parse_err=%d missing_field=%d",
+        len(pairs),
+        n,
+        type_counts,
+        skipped_q,
+        skipped_a,
+        parse_err,
+        missing_field,
+    )
 
     return pairs

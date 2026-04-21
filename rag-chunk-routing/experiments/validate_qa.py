@@ -13,6 +13,7 @@ from rag_cr.io import (
     ensure_dir,
     get_chunks_path,
     get_qa_raw_path,
+    get_qa_rejected_path,
     get_qa_validated_path,
     read_jsonl,
 )
@@ -63,21 +64,22 @@ def _edit_field(label: str, current: str) -> str:
     return new if new else current
 
 
-def _load_decided_ids(path: Path) -> set[str]:
-    if not path.exists():
-        return set()
+def _load_decided_ids(*paths: Path) -> set[str]:
     decided: set[str] = set()
-    for row in read_jsonl(path):
-        qa_id = row.get("qa_id")
-        if isinstance(qa_id, str):
-            decided.add(qa_id)
+    for path in paths:
+        if not path.exists():
+            continue
+        for row in read_jsonl(path):
+            qa_id = row.get("qa_id")
+            if isinstance(qa_id, str):
+                decided.add(qa_id)
     return decided
 
 
-def _append_pair(path: Path, pair: QAPair) -> None:
+def _append_row(path: Path, row: dict) -> None:
     ensure_dir(path.parent)
     with path.open("a", encoding="utf-8") as f:
-        f.write(json.dumps(pair, ensure_ascii=False) + "\n")
+        f.write(json.dumps(row, ensure_ascii=False) + "\n")
 
 
 def _review_pair(
@@ -120,6 +122,7 @@ def main(config: Config) -> None:
 
     raw_path = get_qa_raw_path(config.paths.artifacts_dir)
     validated_path = get_qa_validated_path(config.paths.artifacts_dir)
+    rejected_path = get_qa_rejected_path(config.paths.artifacts_dir)
     chunks_path = get_chunks_path(config.paths.artifacts_dir, config.qa.source_chunk_size)
 
     if not raw_path.exists():
@@ -135,18 +138,21 @@ def main(config: Config) -> None:
     chunks = cast(list[Chunk], read_jsonl(chunks_path))
     chunk_text_by_id = {c["chunk_id"]: c["text"] for c in chunks}
 
-    decided = _load_decided_ids(validated_path)
+    decided = _load_decided_ids(validated_path, rejected_path)
     pending = [p for p in raw_pairs if p["qa_id"] not in decided]
 
     print(_hr("QA VALIDATION"))
     print(f"Raw candidates:    {len(raw_pairs)}")
-    print(f"Already decided:   {len(decided)}  (kept in {validated_path.name})")
+    print(
+        f"Already decided:   {len(decided)}  "
+        f"(tracked in {validated_path.name} + {rejected_path.name})"
+    )
     print(f"Pending this run:  {len(pending)}")
     if not pending:
         print("\nNothing to review. All raw candidates already have a decision.")
         return
     print("\nControls: a=accept  r=reject  e=edit  q=quit & save")
-    print("Rejected pairs are dropped. Edits are saved as accepted.\n")
+    print("Accepts and edits go to the validated file; rejects go to the rejected file.\n")
 
     accepted = 0
     rejected = 0
@@ -157,9 +163,10 @@ def main(config: Config) -> None:
             )
             result = _review_pair(pair, chunk_text, index=i, total=len(pending))
             if result is None:
+                _append_row(rejected_path, {"qa_id": pair["qa_id"]})
                 rejected += 1
             else:
-                _append_pair(validated_path, result)
+                _append_row(validated_path, dict(result))
                 accepted += 1
     except KeyboardInterrupt:
         print("\nStopping early — progress saved.")
@@ -169,6 +176,7 @@ def main(config: Config) -> None:
     print(f"Accepted: {accepted}")
     print(f"Rejected: {rejected}")
     print(f"Validated file: {validated_path}")
+    print(f"Rejected file:  {rejected_path}")
 
 
 if __name__ == "__main__":

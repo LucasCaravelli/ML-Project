@@ -89,6 +89,10 @@ def get_qa_validated_path(artifacts_dir: str | Path) -> Path:
     return Path(artifacts_dir) / "qa" / "qa_validated.jsonl"
 
 
+def get_qa_rejected_path(artifacts_dir: str | Path) -> Path:
+    return Path(artifacts_dir) / "qa" / "qa_rejected.jsonl"
+
+
 def get_oracle_labels_path(artifacts_dir: str | Path) -> Path:
     return Path(artifacts_dir) / "qa" / "oracle_labels.jsonl"
 
