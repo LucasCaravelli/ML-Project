@@ -22,7 +22,15 @@ Thumbs.db
 .ipynb_checkpoints/
 
 # Artifacts (regeneratable from data/ + code; never committed)
-artifacts/
+# Exception: QA files below are committed. Once humans have validated them,
+# they are no longer rebuildable in any meaningful sense, and teammates
+# downstream need them to do their work.
+artifacts/*
+!artifacts/qa/
+artifacts/qa/*
+!artifacts/qa/qa_raw.jsonl
+!artifacts/qa/qa_validated.jsonl
+!artifacts/qa/qa_rejected.jsonl
 
 # Results (large per-run outputs ignored; small summaries committed)
 results/runs/*/predictions.jsonl

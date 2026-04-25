@@ -1,7 +1,7 @@
 PY := python
 CONFIG := configs/base.yaml
 
-.PHONY: all indices qa qa-generate qa-validate oracle baselines fusion router frontier clean test lint format
+.PHONY: all indices qa qa-generate qa-validate oracle baselines fusion router frontier clean clean-qa test lint format
 
 all: frontier
 
@@ -44,3 +44,6 @@ format:
 
 clean:
 	rm -rf artifacts/* results/*
+
+clean-qa:
+	rm -rf artifacts/qa
