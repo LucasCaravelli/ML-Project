@@ -47,3 +47,53 @@
 {"qa_id": "qa_0141"}
 {"qa_id": "qa_0142"}
 {"qa_id": "qa_0149"}
+{"qa_id": "qa_0151"}
+{"qa_id": "qa_0152"}
+{"qa_id": "qa_0154"}
+{"qa_id": "qa_0155"}
+{"qa_id": "qa_0158", "type": "synthesis", "filter": "judge", "reason": "Claimed synthesis, but the answer is a direct lookup from the neighbor chunk; the primary chunk is not essential."}
+{"qa_id": "qa_0164", "type": "synthesis", "filter": "judge", "reason": "The answer can be derived from the neighbor chunk alone: it states the ICARS improvement from 85 to 71, concurrent glycemic variability improvement, shared mitochondrial pathophysiology, and rationale for mitochondrial protection, so the primary chunk is not essential for synthesis."}
+{"qa_id": "qa_0168", "type": "factoid", "filter": "judge", "reason": "Question admits multiple supported answers (gene replacement, gene editing, RNA-based approaches), so the gold answer is incomplete/ambiguous."}
+{"qa_id": "qa_0170", "type": "synthesis", "filter": "judge", "reason": "The comparison is fully answerable from the neighbor chunk alone, which states both the non-Seahorse fibroblast durations and that Seahorse experiments used 5 days; it does not truly require integrating primary and neighbor chunks."}
+{"qa_id": "qa_0217", "type": "factoid", "filter": "judge", "reason": "Question wording is ambiguous/awkward: it asks for a family relation, but the gold answer is disease status rather than a relation."}
+{"qa_id": "qa_0235", "type": "factoid", "filter": "judge", "reason": "The chunk states the nucleus dorsalis of Clarke is absent or severely depleted, not that the dorsal spinocerebellar tract itself is absent or severely depleted."}
+{"qa_id": "qa_0260", "type": "multihop", "filter": "primary_only", "reason": "primary-only F1=1.00 >= 0.8"}
+{"qa_id": "qa_0261", "type": "multihop", "filter": "primary_only", "reason": "primary-only F1=1.00 >= 0.8"}
+{"qa_id": "qa_0264", "type": "multihop", "filter": "primary_only", "reason": "primary-only F1=1.00 >= 0.8"}
+{"qa_id": "qa_0273", "type": "multihop", "filter": "judge", "reason": "Ambiguous: after FXN suppression the primary lists iron accumulation and oxidative stress, and the neighbor identifies both iron dysregulation and oxidative stress as involved in both FA and MS."}
+{"qa_id": "qa_0274", "type": "multihop", "filter": "primary_only", "reason": "primary-only F1=1.00 >= 0.8"}
+{"qa_id": "qa_0276", "type": "multihop", "filter": "primary_only", "reason": "primary-only F1=0.93 >= 0.8"}
+{"qa_id": "qa_0290", "type": "multihop", "filter": "primary_only", "reason": "primary-only F1=1.00 >= 0.8"}
+{"qa_id": "qa_0312", "type": "multihop", "filter": "judge", "reason": "The gold answer 'none' depends on an intersection/inference, but the chunks do not provide an exhaustive categorization of all FA1-derived cell types; neural crest cells are not classified, so 'none' is not fully supported."}
+{"qa_id": "qa_0316", "type": "multihop", "filter": "judge", "reason": "Claimed multihop, but the answer is a direct lookup from the primary chunk; the neighbor is not essential."}
+{"qa_id": "qa_0327", "type": "multihop", "filter": "judge", "reason": "Claimed multihop, but the gold answer is a direct span from the neighbor chunk; primary context is not essential to answer."}
+{"qa_id": "qa_0333", "type": "multihop", "filter": "primary_only", "reason": "primary-only F1=1.00 >= 0.8"}
+{"qa_id": "qa_0338", "type": "multihop", "filter": "judge", "reason": "Labeled multihop, but both the FA genetic cause and the selective false-belief PST finding are stated in the primary chunk, so no neighbor chunk is required."}
+{"qa_id": "qa_0344", "type": "multihop", "filter": "judge", "reason": "Labeled multihop, but the answer is essentially a primary-chunk lookup: definite CCAS is associated with loss of Crus I–PFC connectivity; the ctDCS neighbor context is not necessary to identify it."}
+{"qa_id": "qa_0357", "type": "synthesis", "filter": "judge", "reason": "Claimed synthesis, but the question is answerable from the primary chunk alone: it states the canonical C-terminal Fe-S role and that the N-terminal 1–40 region binds OXCT1 and prevents its degradation."}
+{"qa_id": "qa_0359", "type": "synthesis", "filter": "judge", "reason": "The answer is fully stated in a single neighbor chunk, so it is a disguised lookup rather than requiring synthesis across primary and neighbor chunks."}
+{"qa_id": "qa_0361", "type": "synthesis", "filter": "judge", "reason": "Gold answer is partly unsupported/misleading: the depth-1 FRDA cluster is explicitly described as having no interruption, so saying FRDA has 1–2 nontriplet 3′ interruptions with depths 1, 9, or 24 conflates no interruption with interrupted expansions."}
+{"qa_id": "qa_0371", "type": "synthesis", "filter": "judge", "reason": "Claimed synthesis is not satisfied: the gold answer is essentially stated in a single neighbor chunk, so it does not require integrating the primary with neighbors."}
+{"qa_id": "qa_0372", "type": "synthesis", "filter": "judge", "reason": "The comparison is answerable from the PRIMARY chunk alone: fraction 7 had the largest phenolic content, while fractions 2 and 3 mainly contained sugars; neighbor context only adds the 80.5% detail."}
+{"qa_id": "qa_0375", "type": "synthesis", "filter": "judge", "reason": "Claimed synthesis is not met: the answer is essentially stated directly in a neighbor chunk, including the 'promising interim strategy... until gene therapies' conclusion and outcomes, without needing integration with the primary chunk."}
+{"qa_id": "qa_0380", "type": "synthesis", "filter": "judge", "reason": "The question is answerable from the PRIMARY chunk alone; neighbor chunks are not essential for the claimed synthesis type."}
+{"qa_id": "qa_0381", "type": "synthesis", "filter": "judge", "reason": "Claimed synthesis, but the full answer is supported by the PRIMARY chunk alone; neighbor chunks are not essential."}
+{"qa_id": "qa_0382", "type": "synthesis", "filter": "judge", "reason": "Claimed synthesis does not fit: the full answer is directly stated in a single neighbor chunk, so no integration across primary and neighbor chunks is required."}
+{"qa_id": "qa_0385", "type": "synthesis", "filter": "judge", "reason": "The answer can be derived from the neighbor chunk alone; the primary chunk is not essential, so it does not meet the claimed synthesis requirement."}
+{"qa_id": "qa_0398", "type": "synthesis", "filter": "primary_only", "reason": "primary-only F1=0.86 >= 0.8"}
+{"qa_id": "qa_0403", "type": "synthesis", "filter": "judge", "reason": "Claimed synthesis, but the full trade-off is answerable from a single neighbor chunk without needing integration across primary and neighbor chunks."}
+{"qa_id": "qa_0404", "type": "synthesis", "filter": "judge", "reason": "Claimed synthesis, but the answer is fully contained in a single neighbor chunk; the primary chunk is not essential."}
+{"qa_id": "qa_0413", "type": "synthesis", "filter": "judge", "reason": "Labeled synthesis, but the question can be answered from the primary chunk alone, which already states posterior cerebellum activation, poorer cerebellar-disease performance on false-belief sequencing, and the FA hypothesis."}
+{"qa_id": "qa_0414", "type": "synthesis", "filter": "judge", "reason": "Question is somewhat vague about 'reference groups'; chunks include parents, healthy controls, and ARCA groups, while gold omits parents, so multiple defensible answers exist."}
+{"qa_id": "qa_0421", "type": "synthesis", "filter": "judge", "reason": "Labeled synthesis, but the core answer (pharmacodynamic biomarker to establish dose and potential surrogate endpoint for these therapies) is directly stated in a single neighbor chunk, so cross-chunk synthesis is not required."}
+{"qa_id": "qa_0429", "type": "synthesis", "filter": "judge", "reason": "The answer is fully stated in a single neighbor chunk; the primary chunk is not essential, so this is not a valid synthesis question."}
+{"qa_id": "qa_0434", "type": "synthesis", "filter": "judge", "reason": "Claimed synthesis is not valid: the treatment trade-off is directly stated in a single neighbor chunk, so the primary chunk is not essential and the question is essentially a lookup."}
+{"qa_id": "qa_0442", "type": "synthesis", "filter": "judge", "reason": "Labeled synthesis, but the complete contrast and mechanism are answerable from a single neighbor chunk without integrating the primary chunk."}
+{"qa_id": "qa_0453", "type": "synthesis", "filter": "judge", "reason": "The answer is fully contained in the PRIMARY chunk; NEIGHBOR chunks are not essential, so the claimed synthesis type does not match."}
+{"qa_id": "qa_0466", "type": "multihop", "filter": "primary_only", "reason": "primary-only F1=1.00 >= 0.8"}
+{"qa_id": "qa_0472", "type": "multihop", "filter": "judge", "reason": "Labeled multihop, but the gold answer is directly obtainable from the primary chunk as the sequencing metric with greatest variation; the neighbor is not essential."}
+{"qa_id": "qa_0475", "type": "synthesis", "filter": "judge", "reason": "Claimed synthesis does not match: the reason is stated directly in the neighbor chunk, so the answer does not require integrating primary and neighbor chunks."}
+{"qa_id": "qa_0487", "type": "synthesis", "filter": "judge", "reason": "The answer is fully available from the neighbor chunk alone, so it does not require synthesis across primary and neighbor chunks."}
+{"qa_id": "qa_0489", "type": "synthesis", "filter": "judge", "reason": "The answer is a direct lookup from the neighbor chunk alone, not a synthesis requiring integration across chunks."}
+{"qa_id": "qa_0497", "type": "synthesis", "filter": "judge", "reason": "Although supported, the answer can be obtained from the neighbor chunk alone (subjective no difference plus SNAPs recordable and motor velocities increased), so it is not a true synthesis across chunks."}
+{"qa_id": "qa_0499", "type": "synthesis", "filter": "judge", "reason": "Claimed synthesis is not valid because the adjacent neighbor chunk alone contains both PREO and TLEO values plus the comparative conclusion; no integration with the primary chunk is required."}
