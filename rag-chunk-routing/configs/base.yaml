@@ -39,17 +39,25 @@ qa:
   source_chunk_size: 512
   neighbor_window: 1
   type_distribution:
-    factoid: 0.40
-    multihop: 0.35
-    synthesis: 0.25
+    factoid: 0.3334
+    multihop: 0.3333
+    synthesis: 0.3333
   generation:
     provider: openai
-    model_name: gpt-4.1-mini
+    models:
+      factoid_question: gpt-5.4-mini
+      multihop_question: gpt-5.5
+      synthesis_question: gpt-5.5
+      answer: gpt-5.5
+      judge: gpt-5.5
     question_temperature: 0.4
     answer_temperature: 0.1
-    max_tokens: 400
-    request_timeout_s: 60
+    judge_temperature: 0.0
+    max_tokens: 8000
+    request_timeout_s: 120
     max_retries: 3
+    primary_only_f1_threshold: 0.8
+    max_topup_rounds: 3
 
 router:
   feature_sets: [tfidf, minilm, handcrafted]
@@ -57,6 +65,9 @@ router:
   cv_folds: 5
 
 prompts:
-  qa_generation: prompts/qa_generation.txt
+  qa_generation_factoid: prompts/qa_generation_factoid.txt
+  qa_generation_multihop: prompts/qa_generation_multihop.txt
+  qa_generation_synthesis: prompts/qa_generation_synthesis.txt
   qa_answer: prompts/qa_answer.txt
   answer: prompts/answer.txt
+  judge: prompts/judge.txt

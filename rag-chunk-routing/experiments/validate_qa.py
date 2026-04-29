@@ -16,6 +16,7 @@ from rag_cr.io import (
     get_qa_rejected_path,
     get_qa_validated_path,
     read_jsonl,
+    write_jsonl,
 )
 from rag_cr.types import Chunk, QAPair
 
@@ -84,16 +85,33 @@ def _append_row(path: Path, row: dict) -> None:
 
 def _review_pair(
     pair: QAPair,
-    chunk_text: str,
+    primary_text: str,
+    neighbors: list[tuple[int, str, str]],
     index: int,
     total: int,
 ) -> QAPair | None:
-    """Return the pair to save (validated=True), or None if rejected."""
+    """Return the pair to save (validated=True), or None if rejected.
+
+    ``neighbors`` is a list of (offset, chunk_id, text) tuples, where offset
+    is the signed index distance from the primary chunk (e.g. -1 for the
+    immediately preceding chunk). They are shown alongside the primary chunk
+    so reviewers see the same context the generator was given.
+    """
     while True:
         print()
         print(_hr(f"{index}/{total}  type={pair['type']}  chunk={pair['source_chunk_id']}"))
-        print(_hr("CHUNK"))
-        print(_wrap(chunk_text))
+        for offset, nb_id, nb_text in sorted(neighbors):
+            if offset >= 0:
+                continue
+            print(_hr(f"NEIGHBOR {offset:+d}  {nb_id}"))
+            print(_wrap(nb_text))
+        print(_hr(f"PRIMARY CHUNK  {pair['source_chunk_id']}"))
+        print(_wrap(primary_text))
+        for offset, nb_id, nb_text in sorted(neighbors):
+            if offset <= 0:
+                continue
+            print(_hr(f"NEIGHBOR {offset:+d}  {nb_id}"))
+            print(_wrap(nb_text))
         print(_hr("QUESTION"))
         print(_wrap(pair["question"]))
         print(_hr("ANSWER"))
@@ -125,58 +143,127 @@ def main(config: Config) -> None:
     rejected_path = get_qa_rejected_path(config.paths.artifacts_dir)
     chunks_path = get_chunks_path(config.paths.artifacts_dir, config.qa.source_chunk_size)
 
-    if not raw_path.exists():
-        raise FileNotFoundError(
-            f"Raw QA file missing: {raw_path}. Run `python experiments/generate_qa.py` first."
-        )
     if not chunks_path.exists():
         raise FileNotFoundError(
             f"Chunks file missing: {chunks_path}. Run `make indices` first."
         )
+    if not raw_path.exists():
+        raise FileNotFoundError(
+            f"Raw QA file missing: {raw_path}. Run `python experiments/generate_qa.py` "
+            "and `python experiments/filter_qa.py` first."
+        )
+
+    chunks = cast(list[Chunk], read_jsonl(chunks_path))
+    chunk_idx_by_id = {c["chunk_id"]: i for i, c in enumerate(chunks)}
+    neighbor_window = config.qa.neighbor_window
 
     raw_pairs = cast(list[QAPair], read_jsonl(raw_path))
-    chunks = cast(list[Chunk], read_jsonl(chunks_path))
-    chunk_text_by_id = {c["chunk_id"]: c["text"] for c in chunks}
-
-    decided = _load_decided_ids(validated_path, rejected_path)
-    pending = [p for p in raw_pairs if p["qa_id"] not in decided]
-
-    print(_hr("QA VALIDATION"))
-    print(f"Raw candidates:    {len(raw_pairs)}")
-    print(
-        f"Already decided:   {len(decided)}  "
-        f"(tracked in {validated_path.name} + {rejected_path.name})"
+    validated_entries = (
+        cast(list[QAPair], read_jsonl(validated_path)) if validated_path.exists() else []
     )
-    print(f"Pending this run:  {len(pending)}")
-    if not pending:
-        print("\nNothing to review. All raw candidates already have a decision.")
-        return
-    print("\nControls: a=accept  r=reject  e=edit  q=quit & save")
-    print("Accepts and edits go to the validated file; rejects go to the rejected file.\n")
+    validated_ids = {p["qa_id"] for p in validated_entries}
 
-    accepted = 0
-    rejected = 0
+    pending = list(raw_pairs)
+
+    print(_hr("QA HUMAN REVIEW"))
+    print(f"Pending in {raw_path.name}: {len(pending)}")
+    judge_passed = sum(1 for p in pending if p["qa_id"] in validated_ids)
+    print(
+        f"  judge-validated (in {validated_path.name}): {judge_passed}\n"
+        f"  not yet judge-validated:                {len(pending) - judge_passed}"
+    )
+    if not pending:
+        print("\nNothing to review.")
+        return
+    print(
+        "\nControls: a=accept  r=reject  e=edit  q=quit & save\n"
+        f"Accept → remove from {raw_path.name}; entry stays in {validated_path.name}.\n"
+        f"Reject → remove from {raw_path.name} and {validated_path.name}; "
+        f"qa_id appended to {rejected_path.name}.\n"
+        f"Edit   → remove from {raw_path.name}; updated entry written to {validated_path.name}.\n"
+    )
+
+    decided_ids: set[str] = set()
+    edits_by_id: dict[str, QAPair] = {}
+    rejected_now: set[str] = set()
+    accepted_unchanged = 0
+    edited = 0
+    rejected_count = 0
     try:
         for i, pair in enumerate(pending, start=1):
-            chunk_text = chunk_text_by_id.get(
-                pair["source_chunk_id"], "(chunk text not found)"
-            )
-            result = _review_pair(pair, chunk_text, index=i, total=len(pending))
+            primary_idx = chunk_idx_by_id.get(pair["source_chunk_id"])
+            if primary_idx is None:
+                primary_text = "(chunk text not found)"
+                neighbors: list[tuple[int, str, str]] = []
+            else:
+                primary_text = chunks[primary_idx]["text"]
+                neighbors = []
+                if pair["type"] != "factoid" and neighbor_window > 0:
+                    lo = max(0, primary_idx - neighbor_window)
+                    hi = min(len(chunks), primary_idx + neighbor_window + 1)
+                    for j in range(lo, hi):
+                        if j == primary_idx:
+                            continue
+                        neighbors.append(
+                            (j - primary_idx, chunks[j]["chunk_id"], chunks[j]["text"])
+                        )
+            result = _review_pair(pair, primary_text, neighbors, index=i, total=len(pending))
+            decided_ids.add(pair["qa_id"])
             if result is None:
                 _append_row(rejected_path, {"qa_id": pair["qa_id"]})
-                rejected += 1
+                rejected_now.add(pair["qa_id"])
+                rejected_count += 1
             else:
-                _append_row(validated_path, dict(result))
-                accepted += 1
+                if result["question"] != pair["question"] or result["answer"] != pair["answer"]:
+                    edits_by_id[pair["qa_id"]] = result
+                    edited += 1
+                else:
+                    if pair["qa_id"] not in validated_ids:
+                        # First-pass accept of a pair the judge never validated.
+                        edits_by_id[pair["qa_id"]] = cast(
+                            QAPair, {**pair, "validated": True}
+                        )
+                    accepted_unchanged += 1
     except KeyboardInterrupt:
         print("\nStopping early — progress saved.")
 
+    # Rewrite validated: drop rejected entries; replace edits; preserve everything else.
+    if decided_ids:
+        merged: list[QAPair] = []
+        seen: set[str] = set()
+        for p in validated_entries:
+            qid = p["qa_id"]
+            if qid in seen:
+                continue
+            if qid in rejected_now:
+                seen.add(qid)
+                continue
+            if qid in edits_by_id:
+                merged.append(edits_by_id[qid])
+                seen.add(qid)
+                continue
+            merged.append(p)
+            seen.add(qid)
+        # Add accepted-with-edits or first-pass accepts that weren't previously in validated.
+        for qid, entry in edits_by_id.items():
+            if qid not in seen:
+                merged.append(entry)
+                seen.add(qid)
+        write_jsonl(validated_path, [dict(p) for p in merged])
+
+        # Remove decided pairs from qa_raw.jsonl.
+        remaining_raw = [p for p in raw_pairs if p["qa_id"] not in decided_ids]
+        write_jsonl(raw_path, [dict(p) for p in remaining_raw])
+
     print()
     print(_hr("SUMMARY"))
-    print(f"Accepted: {accepted}")
-    print(f"Rejected: {rejected}")
+    print(f"Accepted (unchanged): {accepted_unchanged}")
+    print(f"Edited (kept):        {edited}")
+    print(f"Rejected:             {rejected_count}")
+    print(f"Removed from raw:     {len(decided_ids)}")
     print(f"Validated file: {validated_path}")
     print(f"Rejected file:  {rejected_path}")
+    print(f"Raw file:       {raw_path}")
 
 
 if __name__ == "__main__":

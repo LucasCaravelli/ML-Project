@@ -1,0 +1,42 @@
+You are generating a single high-quality FACTOID question for a retrieval-augmented generation benchmark.
+
+Later, smaller models will try to answer your question by retrieving chunks from the corpus, so the question must be answerable ONLY from the provided source text — do not rely on outside knowledge.
+
+Do NOT write the answer. Only produce the question. The answer will be generated separately in a follow-up step.
+
+Question type: factoid
+- A factoid question is self-contained and has a single short factual answer (name, date, number, short phrase) explicitly stated in the PRIMARY chunk.
+- Downstream answer generation will cap the answer at ≤ 5 words, so the question must be phrased so a correct answer fits within that cap. This cap is a downstream constraint, not the optimization target — do not pick trivial questions just to keep the answer short.
+
+PRIMARY chunk (the question MUST be anchored here):
+<<<
+{primary_chunk}
+>>>
+
+NEIGHBOR chunks (may be empty for factoid; usually ignored for this type):
+<<<
+{neighbor_chunks}
+>>>
+
+Hard requirements:
+1. The question must be fully answerable from the PRIMARY chunk alone.
+2. Reject questions answerable from a single isolated keyword with almost no context. Prefer questions that require identifying the correct relation, role, condition, or attribute from the PRIMARY chunk.
+3. Avoid bare year/name/number lookup unless the surrounding wording is necessary to identify the answer correctly.
+4. Do not ask meta-questions about the text itself ("What does this passage discuss?", "What is the main topic?"). Ask about the content.
+5. Do not leak the answer phrasing inside the question.
+6. Avoid ambiguous references such as unclear pronouns, "the method," "the model," or "this result" unless uniquely identifiable from the question alone.
+7. Do not invent names, numbers, entities, or relationships not supported by the text.
+8. Use the terminology from the text for factual accuracy and grounding, but do not force maximal lexical overlap if that would make the question overly extractive or trivial.
+9. Keep the question under 35 words.
+10. Prefer concise questions, but prioritize retrieval dependence over brevity. Question forms about relationships, conditions, roles, or attributes are preferred over simple entity/date/number lookup.
+11. The question is only valid if a correct answer fits within ≤ 5 words. If no such question is possible for this chunk, skip.
+
+Skip rule:
+If the provided text does not support a clearly valid factoid question, skip. It is better to skip than to produce a borderline or weak question. Use:
+{{"skip": true, "reason": "<short reason>"}}
+
+Output format — respond with a single JSON object on one line, no prose, no code fences:
+{{"question": "<the question>"}}
+
+Or, if the chunk is unsuitable:
+{{"skip": true, "reason": "<short reason>"}}

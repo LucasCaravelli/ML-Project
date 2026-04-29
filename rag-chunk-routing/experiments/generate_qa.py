@@ -1,16 +1,64 @@
 from __future__ import annotations
 
 import argparse
-import sys
+from pathlib import Path
 
 from dotenv import load_dotenv
 
 from rag_cr import Config, load_config, set_seed
-from rag_cr.io import get_chunks_path, get_qa_raw_path, read_jsonl, write_jsonl
+from rag_cr.io import (
+    get_chunks_path,
+    get_qa_raw_path,
+    get_qa_rejected_path,
+    get_qa_validated_path,
+    read_jsonl,
+    write_jsonl,
+)
 from rag_cr.logging import get_logger
-from rag_cr.qa_gen import generate_qa
+from rag_cr.qa_filter import compute_deficits
+from rag_cr.qa_gen import _targets_from_distribution, generate_qa
+from rag_cr.types import QAPair
 
 log = get_logger(__name__)
+
+
+def _next_qa_id_offset(*paths: Path) -> int:
+    max_idx = -1
+    for path in paths:
+        if not path.exists():
+            continue
+        for row in read_jsonl(path):
+            qa_id = row.get("qa_id", "")
+            if not (isinstance(qa_id, str) and qa_id.startswith("qa_")):
+                continue
+            try:
+                idx = int(qa_id[3:])
+            except ValueError:
+                continue
+            if idx > max_idx:
+                max_idx = idx
+    return max_idx + 1
+
+
+def _validated_chunk_ids(validated_path: Path) -> set[str]:
+    if not validated_path.exists():
+        return set()
+    return {
+        row["source_chunk_id"]
+        for row in read_jsonl(validated_path)
+        if isinstance(row.get("source_chunk_id"), str)
+    }
+
+
+def _count_by_type(path: Path) -> dict[str, int]:
+    if not path.exists():
+        return {}
+    counts: dict[str, int] = {}
+    for row in read_jsonl(path):
+        t = row.get("type")
+        if isinstance(t, str):
+            counts[t] = counts.get(t, 0) + 1
+    return counts
 
 
 def main(config: Config, limit: int | None, force: bool) -> None:
@@ -24,35 +72,76 @@ def main(config: Config, limit: int | None, force: bool) -> None:
         )
 
     out_path = get_qa_raw_path(config.paths.artifacts_dir)
-    if out_path.exists() and not force:
-        existing = read_jsonl(out_path)
-        if existing:
-            log.error(
-                "Refusing to overwrite existing %s (%d rows). "
-                "Pass --force to replace, or `make clean-qa` first.",
-                out_path,
-                len(existing),
-            )
-            sys.exit(1)
+    validated_path = get_qa_validated_path(config.paths.artifacts_dir)
+    rejected_path = get_qa_rejected_path(config.paths.artifacts_dir)
 
+    if force and out_path.exists():
+        existing_raw: list[QAPair] = []
+    else:
+        existing_raw = read_jsonl(out_path) if out_path.exists() else []  # type: ignore[assignment]
+
+    exclude = _validated_chunk_ids(validated_path)
+    qa_id_offset = _next_qa_id_offset(out_path, validated_path, rejected_path)
+
+    quota = _targets_from_distribution(config.qa.target_count, config.qa.type_distribution)
+    validated_counts = _count_by_type(validated_path)
+    raw_unfiltered_counts = _count_by_type(out_path) if not force else {}
+    deficits = compute_deficits(quota, validated_counts, raw_unfiltered_counts)
+
+    if limit is not None:
+        # Cap per-type generation evenly within the limit.
+        cap = _targets_from_distribution(limit, config.qa.type_distribution)
+        deficits = {t: min(deficits.get(t, 0), cap.get(t, 0)) for t in quota}
+
+    total_to_generate = sum(deficits.values())
     log.info(
-        "Generating QA pairs from %s (limit=%s, target_count=%d)",
-        chunks_path,
-        limit if limit is not None else config.qa.initial_batch_size,
-        config.qa.target_count,
+        "Per-type quota=%s validated=%s raw_unfiltered=%s -> generating %s (total=%d)",
+        quota,
+        validated_counts,
+        raw_unfiltered_counts,
+        deficits,
+        total_to_generate,
     )
 
-    pairs = generate_qa(
-        chunks_path=chunks_path,
-        qa_cfg=config.qa,
-        question_prompt_path=config.prompts.qa_generation,
-        answer_prompt_path=config.prompts.qa_answer,
-        limit=limit,
-        seed=config.project.seed,
-    )
+    if total_to_generate == 0:
+        log.info("All per-type quotas already met. Nothing to generate.")
+        return
 
-    write_jsonl(out_path, pairs)
-    log.info("Wrote %d raw QA pairs to %s", len(pairs), out_path)
+    question_prompt_paths = {
+        "factoid": config.prompts.qa_generation_factoid,
+        "multihop": config.prompts.qa_generation_multihop,
+        "synthesis": config.prompts.qa_generation_synthesis,
+    }
+
+    new_pairs: list[QAPair] = []
+    for qtype, n in deficits.items():
+        if n <= 0:
+            continue
+        generated = generate_qa(
+            chunks_path=chunks_path,
+            qa_cfg=config.qa,
+            question_prompt_paths=question_prompt_paths,
+            answer_prompt_path=config.prompts.qa_answer,
+            limit=n,
+            seed=config.project.seed,
+            qa_id_offset=qa_id_offset,
+            exclude_chunk_ids=exclude,
+            type_override=qtype,
+        )
+        qa_id_offset += len(generated)
+        new_pairs.extend(generated)
+
+    if force:
+        write_jsonl(out_path, new_pairs)
+        log.info("Wrote %d new raw QA pairs to %s (overwrote)", len(new_pairs), out_path)
+    else:
+        write_jsonl(out_path, existing_raw + new_pairs)
+        log.info(
+            "Appended %d new raw QA pairs to %s (now %d total unfiltered)",
+            len(new_pairs),
+            out_path,
+            len(existing_raw) + len(new_pairs),
+        )
 
 
 if __name__ == "__main__":

@@ -5,9 +5,19 @@ from pathlib import Path
 
 import pytest
 
-from rag_cr.config import QAConfig, QAGenerationConfig
+from rag_cr.config import QAConfig, QAGenerationConfig, QAModelsConfig
 from rag_cr.io import read_jsonl, write_jsonl
 from rag_cr.qa_gen import _targets_from_distribution, generate_qa
+
+
+def _fake_models() -> QAModelsConfig:
+    return QAModelsConfig(
+        factoid_question="model-factoid-q",
+        multihop_question="model-multihop-q",
+        synthesis_question="model-synthesis-q",
+        answer="model-answer",
+        judge="model-judge",
+    )
 
 
 def test_stratification_sums_to_n() -> None:
@@ -59,13 +69,19 @@ def test_qapair_jsonl_roundtrip(tmp_path: Path) -> None:
 
 
 def test_prompt_files_present_and_have_placeholders(project_root: Path) -> None:
-    q_prompt = (project_root / "prompts" / "qa_generation.txt").read_text(encoding="utf-8")
     a_prompt = (project_root / "prompts" / "qa_answer.txt").read_text(encoding="utf-8")
-
-    for placeholder in ("{question_type}", "{primary_chunk}", "{neighbor_chunks}"):
-        assert placeholder in q_prompt, f"{placeholder} missing from qa_generation.txt"
+    for placeholder in ("{question_type}", "{primary_chunk}", "{neighbor_chunks}", "{question}"):
         assert placeholder in a_prompt, f"{placeholder} missing from qa_answer.txt"
-    assert "{question}" in a_prompt, "{question} missing from qa_answer.txt"
+
+    for qtype in ("factoid", "multihop", "synthesis"):
+        path = project_root / "prompts" / f"qa_generation_{qtype}.txt"
+        assert path.exists(), f"missing per-type prompt file: {path}"
+        text = path.read_text(encoding="utf-8")
+        for placeholder in ("{primary_chunk}", "{neighbor_chunks}"):
+            assert placeholder in text, f"{placeholder} missing from {path.name}"
+        assert "{question_type}" not in text, (
+            f"{path.name} should hardcode the question type, not template it"
+        )
 
 
 def _fake_qa_cfg() -> QAConfig:
@@ -77,12 +93,15 @@ def _fake_qa_cfg() -> QAConfig:
         type_distribution={"factoid": 0.5, "multihop": 0.25, "synthesis": 0.25},
         generation=QAGenerationConfig(
             provider="openai",
-            model_name="gpt-test",
+            models=_fake_models(),
             question_temperature=0.4,
             answer_temperature=0.1,
+            judge_temperature=0.0,
             max_tokens=256,
             request_timeout_s=10,
             max_retries=1,
+            primary_only_f1_threshold=0.8,
+            max_topup_rounds=3,
         ),
     )
 
@@ -92,6 +111,13 @@ ANSWER_PROMPT_MARKER = "producing the ground-truth ANSWER"
 
 def _is_answer_prompt(prompt: str) -> bool:
     return ANSWER_PROMPT_MARKER in prompt
+
+
+def _question_prompt_paths(project_root: Path) -> dict[str, Path]:
+    return {
+        qtype: project_root / "prompts" / f"qa_generation_{qtype}.txt"
+        for qtype in ("factoid", "multihop", "synthesis")
+    }
 
 
 def _write_fake_chunks(path: Path, n: int) -> None:
@@ -116,7 +142,7 @@ def test_generate_qa_pipeline_shape(
     chunks_path = tmp_path / "chunks.jsonl"
     _write_fake_chunks(chunks_path, 4)
 
-    def fake_call(prompt: str, cfg: QAGenerationConfig, temperature: float) -> str:
+    def fake_call(prompt: str, model: str, cfg: QAGenerationConfig, temperature: float) -> str:
         if _is_answer_prompt(prompt):
             return json.dumps({"answer": "placeholder content"})
         return json.dumps({"question": "What is the chunk text?"})
@@ -127,7 +153,7 @@ def test_generate_qa_pipeline_shape(
     pairs = generate_qa(
         chunks_path=chunks_path,
         qa_cfg=qa_cfg,
-        question_prompt_path=project_root / "prompts" / "qa_generation.txt",
+        question_prompt_paths=_question_prompt_paths(project_root),
         answer_prompt_path=project_root / "prompts" / "qa_answer.txt",
         limit=qa_cfg.initial_batch_size,
         seed=0,
@@ -156,7 +182,7 @@ def test_generate_qa_skips_unparseable_response(
     chunks_path = tmp_path / "chunks.jsonl"
     _write_fake_chunks(chunks_path, 1)
 
-    def fake_call(prompt: str, cfg: QAGenerationConfig, temperature: float) -> str:
+    def fake_call(prompt: str, model: str, cfg: QAGenerationConfig, temperature: float) -> str:
         return "not valid json"
 
     monkeypatch.setattr("rag_cr.qa_gen._call_openai", fake_call)
@@ -165,7 +191,7 @@ def test_generate_qa_skips_unparseable_response(
     pairs = generate_qa(
         chunks_path=chunks_path,
         qa_cfg=qa_cfg,
-        question_prompt_path=project_root / "prompts" / "qa_generation.txt",
+        question_prompt_paths=_question_prompt_paths(project_root),
         answer_prompt_path=project_root / "prompts" / "qa_answer.txt",
         limit=3,
         seed=0,
@@ -179,7 +205,7 @@ def test_generate_qa_skips_when_question_step_skips(
     chunks_path = tmp_path / "chunks.jsonl"
     _write_fake_chunks(chunks_path, 2)
 
-    def fake_call(prompt: str, cfg: QAGenerationConfig, temperature: float) -> str:
+    def fake_call(prompt: str, model: str, cfg: QAGenerationConfig, temperature: float) -> str:
         if _is_answer_prompt(prompt):
             pytest.fail("answer prompt should not be reached when question step skips")
         return json.dumps({"skip": True, "reason": "too thin"})
@@ -190,7 +216,7 @@ def test_generate_qa_skips_when_question_step_skips(
     pairs = generate_qa(
         chunks_path=chunks_path,
         qa_cfg=qa_cfg,
-        question_prompt_path=project_root / "prompts" / "qa_generation.txt",
+        question_prompt_paths=_question_prompt_paths(project_root),
         answer_prompt_path=project_root / "prompts" / "qa_answer.txt",
         limit=4,
         seed=0,
@@ -204,7 +230,7 @@ def test_generate_qa_skips_when_answer_step_skips(
     chunks_path = tmp_path / "chunks.jsonl"
     _write_fake_chunks(chunks_path, 2)
 
-    def fake_call(prompt: str, cfg: QAGenerationConfig, temperature: float) -> str:
+    def fake_call(prompt: str, model: str, cfg: QAGenerationConfig, temperature: float) -> str:
         if _is_answer_prompt(prompt):
             return json.dumps({"skip": True, "reason": "cannot fit word cap"})
         return json.dumps({"question": "What is the chunk text?"})
@@ -215,12 +241,90 @@ def test_generate_qa_skips_when_answer_step_skips(
     pairs = generate_qa(
         chunks_path=chunks_path,
         qa_cfg=qa_cfg,
-        question_prompt_path=project_root / "prompts" / "qa_generation.txt",
+        question_prompt_paths=_question_prompt_paths(project_root),
         answer_prompt_path=project_root / "prompts" / "qa_answer.txt",
         limit=4,
         seed=0,
     )
     assert pairs == []
+
+
+def test_generate_qa_applies_qa_id_offset(
+    tmp_path: Path, project_root: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    chunks_path = tmp_path / "chunks.jsonl"
+    _write_fake_chunks(chunks_path, 4)
+
+    def fake_call(prompt: str, model: str, cfg: QAGenerationConfig, temperature: float) -> str:
+        if _is_answer_prompt(prompt):
+            return json.dumps({"answer": "placeholder content"})
+        return json.dumps({"question": "What is the chunk text?"})
+
+    monkeypatch.setattr("rag_cr.qa_gen._call_openai", fake_call)
+
+    qa_cfg = _fake_qa_cfg()
+    pairs = generate_qa(
+        chunks_path=chunks_path,
+        qa_cfg=qa_cfg,
+        question_prompt_paths=_question_prompt_paths(project_root),
+        answer_prompt_path=project_root / "prompts" / "qa_answer.txt",
+        limit=qa_cfg.initial_batch_size,
+        seed=0,
+        qa_id_offset=150,
+    )
+
+    qa_ids = [p["qa_id"] for p in pairs]
+    assert qa_ids == [f"qa_{150 + i:04d}" for i in range(len(pairs))]
+    assert qa_ids[0] == "qa_0150"
+
+
+def test_generate_qa_excludes_chunk_ids(
+    tmp_path: Path, project_root: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    chunks_path = tmp_path / "chunks.jsonl"
+    _write_fake_chunks(chunks_path, 4)
+
+    def fake_call(prompt: str, model: str, cfg: QAGenerationConfig, temperature: float) -> str:
+        if _is_answer_prompt(prompt):
+            return json.dumps({"answer": "placeholder content"})
+        return json.dumps({"question": "What is the chunk text?"})
+
+    monkeypatch.setattr("rag_cr.qa_gen._call_openai", fake_call)
+
+    qa_cfg = _fake_qa_cfg()
+    excluded = {"c_0", "c_2"}
+    pairs = generate_qa(
+        chunks_path=chunks_path,
+        qa_cfg=qa_cfg,
+        question_prompt_paths=_question_prompt_paths(project_root),
+        answer_prompt_path=project_root / "prompts" / "qa_answer.txt",
+        limit=qa_cfg.initial_batch_size,
+        seed=0,
+        exclude_chunk_ids=excluded,
+    )
+
+    used_chunks = {p["source_chunk_id"] for p in pairs}
+    assert used_chunks.isdisjoint(excluded)
+    assert used_chunks.issubset({"c_1", "c_3"})
+
+
+def test_generate_qa_raises_when_all_chunks_excluded(
+    tmp_path: Path, project_root: Path
+) -> None:
+    chunks_path = tmp_path / "chunks.jsonl"
+    _write_fake_chunks(chunks_path, 2)
+
+    qa_cfg = _fake_qa_cfg()
+    with pytest.raises(ValueError, match="No chunks available"):
+        generate_qa(
+            chunks_path=chunks_path,
+            qa_cfg=qa_cfg,
+            question_prompt_paths=_question_prompt_paths(project_root),
+            answer_prompt_path=project_root / "prompts" / "qa_answer.txt",
+            limit=2,
+            seed=0,
+            exclude_chunk_ids={"c_0", "c_1"},
+        )
 
 
 def test_generate_qa_rejects_unsupported_provider(
@@ -238,12 +342,15 @@ def test_generate_qa_rejects_unsupported_provider(
         type_distribution=qa_cfg.type_distribution,
         generation=QAGenerationConfig(
             provider="ollama",
-            model_name=qa_cfg.generation.model_name,
+            models=qa_cfg.generation.models,
             question_temperature=qa_cfg.generation.question_temperature,
             answer_temperature=qa_cfg.generation.answer_temperature,
+            judge_temperature=qa_cfg.generation.judge_temperature,
             max_tokens=qa_cfg.generation.max_tokens,
             request_timeout_s=qa_cfg.generation.request_timeout_s,
             max_retries=qa_cfg.generation.max_retries,
+            primary_only_f1_threshold=qa_cfg.generation.primary_only_f1_threshold,
+            max_topup_rounds=qa_cfg.generation.max_topup_rounds,
         ),
     )
 
@@ -251,8 +358,77 @@ def test_generate_qa_rejects_unsupported_provider(
         generate_qa(
             chunks_path=chunks_path,
             qa_cfg=bad_cfg,
-            question_prompt_path=project_root / "prompts" / "qa_generation.txt",
+            question_prompt_paths=_question_prompt_paths(project_root),
             answer_prompt_path=project_root / "prompts" / "qa_answer.txt",
             limit=2,
             seed=0,
         )
+
+
+def test_generate_qa_routes_models_by_type(
+    tmp_path: Path, project_root: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    chunks_path = tmp_path / "chunks.jsonl"
+    _write_fake_chunks(chunks_path, 4)
+
+    seen: list[tuple[str, str]] = []  # (kind, model)
+
+    def fake_call(prompt: str, model: str, cfg: QAGenerationConfig, temperature: float) -> str:
+        if _is_answer_prompt(prompt):
+            seen.append(("answer", model))
+            return json.dumps({"answer": "placeholder content"})
+        seen.append(("question", model))
+        return json.dumps({"question": "What is the chunk text?"})
+
+    monkeypatch.setattr("rag_cr.qa_gen._call_openai", fake_call)
+
+    qa_cfg = _fake_qa_cfg()
+    pairs = generate_qa(
+        chunks_path=chunks_path,
+        qa_cfg=qa_cfg,
+        question_prompt_paths=_question_prompt_paths(project_root),
+        answer_prompt_path=project_root / "prompts" / "qa_answer.txt",
+        limit=qa_cfg.initial_batch_size,
+        seed=0,
+    )
+
+    assert len(pairs) == qa_cfg.initial_batch_size
+    answer_models = {model for kind, model in seen if kind == "answer"}
+    assert answer_models == {qa_cfg.generation.models.answer}
+
+    type_to_model = {
+        "factoid": qa_cfg.generation.models.factoid_question,
+        "multihop": qa_cfg.generation.models.multihop_question,
+        "synthesis": qa_cfg.generation.models.synthesis_question,
+    }
+    question_calls = [m for k, m in seen if k == "question"]
+    expected_models = [type_to_model[p["type"]] for p in pairs]
+    assert question_calls == expected_models
+
+
+def test_generate_qa_type_override_restricts_to_one_type(
+    tmp_path: Path, project_root: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    chunks_path = tmp_path / "chunks.jsonl"
+    _write_fake_chunks(chunks_path, 4)
+
+    def fake_call(prompt: str, model: str, cfg: QAGenerationConfig, temperature: float) -> str:
+        if _is_answer_prompt(prompt):
+            return json.dumps({"answer": "placeholder content"})
+        return json.dumps({"question": "What is the chunk text?"})
+
+    monkeypatch.setattr("rag_cr.qa_gen._call_openai", fake_call)
+
+    qa_cfg = _fake_qa_cfg()
+    pairs = generate_qa(
+        chunks_path=chunks_path,
+        qa_cfg=qa_cfg,
+        question_prompt_paths=_question_prompt_paths(project_root),
+        answer_prompt_path=project_root / "prompts" / "qa_answer.txt",
+        limit=4,
+        seed=0,
+        type_override="multihop",
+    )
+
+    assert len(pairs) == 4
+    assert all(p["type"] == "multihop" for p in pairs)

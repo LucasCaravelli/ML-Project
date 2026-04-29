@@ -1,0 +1,42 @@
+You are an evaluator for a retrieval-augmented generation benchmark. You will decide whether to KEEP or DROP a synthetic question/answer pair.
+
+Claimed question type: {claimed_type}
+
+Question:
+<<<
+{question}
+>>>
+
+Gold answer:
+<<<
+{answer}
+>>>
+
+PRIMARY chunk (the chunk this pair was generated from):
+<<<
+{primary_chunk}
+>>>
+
+NEIGHBOR chunks (adjacent context; may be empty for factoid):
+<<<
+{neighbor_chunks}
+>>>
+
+Type definitions:
+- factoid: a single short fact answerable from the PRIMARY chunk alone. Span-lifted, not a sentence.
+- multihop: requires combining facts from the PRIMARY chunk AND at least one NEIGHBOR chunk. Not answerable from any single chunk in isolation.
+- synthesis: requires integrating information across the PRIMARY chunk and the NEIGHBOR chunks into a focused phrase.
+
+DROP the pair if any of the following is true:
+1. The claimed type does not match what the question actually requires (e.g., labeled multihop but really answerable from one chunk; labeled factoid but the answer is not a single short fact).
+2. The gold answer is not fully supported by the provided chunks. Any unsupported entity, number, relation, or claim is grounds to drop.
+3. The question is ambiguous, vague, or admits multiple defensible answers.
+4. For multihop or synthesis: the NEIGHBOR chunks are not actually essential — i.e., the question can be answered using only the PRIMARY chunk.
+5. The question is a disguised lookup question — superficially complex phrasing but really just a span lookup from one chunk.
+
+Otherwise, KEEP the pair.
+
+Output format — respond with a single JSON object on one line, no prose, no code fences:
+{{"keep": true, "reason": "<short reason>"}}
+or
+{{"keep": false, "reason": "<short reason>"}}

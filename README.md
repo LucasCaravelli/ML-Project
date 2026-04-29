@@ -169,54 +169,97 @@ If you are on Windows without `make` installed, every target is a one-line
 wrapper around a `python experiments/<script>.py --config configs/base.yaml`
 call — read the `Makefile` and run the underlying command directly.
 
-### QA generation and validation
+### QA generation, filtering, and validation
 
-The QA lane runs in two stages: synthetic generation against OpenAI, then
-human accept/reject/edit review. Both are resumable.
+The QA lane runs in three stages: synthetic generation against OpenAI, an
+automated filter (primary-only F1 check + LLM judge), then human
+accept/reject/edit review. All three are resumable.
 
 **One-time setup.** Copy `rag-chunk-routing/.env.example` to
 `rag-chunk-routing/.env` and fill in your `OPENAI_API_KEY`. The `.env` file
-is gitignored. Generation uses the model and temperatures pinned in
-`configs/base.yaml` under `qa.generation` (currently `gpt-4.1-mini`).
+is gitignored. Models, temperatures, and limits are pinned in
+`configs/base.yaml` under `qa.generation`. Different stages use different
+models (set under `qa.generation.models`): a cheap model for factoid
+questions, a stronger model for multihop/synthesis questions, the answer
+pass, and the judge. Per-type prompts live in `prompts/qa_generation_*.txt`
+and the judge prompt in `prompts/judge.txt`.
+
+The type mix in `qa.type_distribution` is roughly uniform across factoid /
+multihop / synthesis. Stratification uses the largest-remainder method so
+counts sum exactly to the requested batch size and the mix is deterministic
+for a given seed.
 
 **Generate.** From `rag-chunk-routing/`:
 
 ```
-make qa-generate                    # writes qa.initial_batch_size rows (150)
+make qa-generate                    # tops up qa_raw.jsonl toward qa.target_count
 python experiments/generate_qa.py   # equivalent without make
 python experiments/generate_qa.py --limit 5   # small smoke run
 ```
 
-`generate_qa` refuses to overwrite a non-empty `artifacts/qa/qa_raw.jsonl`.
-Pass `--force` to replace it, or `make clean-qa` (`rm -rf artifacts/qa`)
-first. Output is stratified by `qa.type_distribution` (factoid / multihop /
-synthesis) using the largest-remainder method, so counts sum exactly to the
-requested batch size and the type mix is deterministic for a given seed.
+`generate_qa` is incremental: it computes per-type deficits against
+`qa.target_count` (counting both the existing `qa_validated.jsonl` and the
+already-pending `qa_raw.jsonl`) and only generates the shortfall, appending
+new rows to `qa_raw.jsonl`. Chunks already used in `qa_validated.jsonl` are
+excluded from sampling so we don't mine the same chunk twice. Pass
+`--force` to overwrite `qa_raw.jsonl` instead of appending, or `make
+clean-qa` (`rm -rf artifacts/qa`) first.
+
+**Filter.** From `rag-chunk-routing/`:
+
+```
+python experiments/filter_qa.py                 # filter + per-type top-up loop
+python experiments/filter_qa.py --no-topup      # single filter pass, no generation
+```
+
+The filter does two things to every pending pair in `qa_raw.jsonl`:
+
+1. **Primary-only F1 check (multihop/synthesis only).** Re-asks the answer
+   model with only the primary chunk (no neighbors). If the resulting
+   answer's token-F1 against the gold answer is at or above
+   `qa.generation.primary_only_f1_threshold`, the pair is dropped — the
+   question evidently didn't actually require the neighbors, so it isn't
+   really multihop/synthesis.
+2. **LLM judge.** A separate judge model sees the question, gold answer,
+   primary chunk, neighbors, and claimed type, and decides keep or drop.
+
+Pairs the judge keeps move to `qa_validated.jsonl` (still subject to human
+review). Filter-rejected pairs go to `qa_rejected.jsonl` and are removed
+from `qa_raw.jsonl`. With top-up enabled (the default), the script then
+loops up to `qa.generation.max_topup_rounds` times: each round it generates
+just enough new pairs to cover any per-type deficit, filters them, and
+stops once every type hits quota.
 
 **Validate.** From `rag-chunk-routing/`:
 
 ```
-make qa-validate                    # interactive review of qa_raw.jsonl
+make qa-validate                    # interactive human review
 python experiments/validate_qa.py   # equivalent without make
 ```
 
-Controls per pair: `a` accept, `r` reject, `e` edit question/answer then
-accept, `q` quit and save progress. Decisions are appended to
-`qa_validated.jsonl` (accepts and edits) or `qa_rejected.jsonl` (rejects),
-so re-running picks up where you stopped without re-prompting on already
-decided pairs.
+The reviewer sees the primary chunk, plus neighbors (for multihop /
+synthesis pairs, using `qa.neighbor_window`), the question, and the gold
+answer. Controls per pair: `a` accept, `r` reject, `e` edit then accept,
+`q` quit and save progress. As decisions land, pairs are removed from
+`qa_raw.jsonl`; rejects are also removed from `qa_validated.jsonl` and
+their `qa_id` appended to `qa_rejected.jsonl`. Re-running picks up where
+you stopped.
 
 **Outputs.** All three files live in `artifacts/qa/` and are committed to
 the repo (the only carve-outs to `artifacts/` being gitignored, because
 hand-validated QA is not rebuildable):
 
-- `qa_raw.jsonl` — the unfiltered LLM batch. Schema: `qa_id`, `question`,
-  `answer`, `source_chunk_id`, `type`, `validated=False`.
-- `qa_validated.jsonl` — pairs the human accepted (possibly edited). Same
-  schema with `validated=True`. **This is the file downstream consumers
-  read.**
-- `qa_rejected.jsonl` — sidecar of `{"qa_id": ...}` so re-runs of validation
-  skip already rejected items. Not consumed downstream.
+- `qa_raw.jsonl` — pairs awaiting human review. Each row has been generated
+  and judge-passed but not yet seen by a human. Schema: `qa_id`,
+  `question`, `answer`, `source_chunk_id`, `type`, `validated=False`.
+- `qa_validated.jsonl` — pairs the judge passed and (eventually) the human
+  also accepted, possibly with edits. Same schema with `validated=True`.
+  **This is the file downstream consumers read.** Note: rows can be
+  present here before human review — the human pass refines this set
+  rather than building it from scratch.
+- `qa_rejected.jsonl` — sidecar carrying `qa_id`, plus `type`, `filter`,
+  and `reason` for filter-stage rejects. Used to skip already-rejected
+  items on re-runs. Not consumed downstream.
 
 **For the downstream integrator.** Read `artifacts/qa/qa_validated.jsonl`
 via `rag_cr.io.read_jsonl` (or `get_qa_validated_path(artifacts_dir)`).
