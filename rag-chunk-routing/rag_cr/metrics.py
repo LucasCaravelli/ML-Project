@@ -22,7 +22,7 @@ def _exact_match(prediction: str, gold: str) -> float:
     return 1.0 if _normalize(prediction) == _normalize(gold) else 0.0
 
 
-def _token_f1(prediction: str, gold: str) -> float:
+def token_f1(prediction: str, gold: str) -> float:
     pred_counts = Counter(_tokenize(prediction))
     gold_counts = Counter(_tokenize(gold))
 
@@ -48,7 +48,7 @@ def score(prediction: str, gold: str, passages: list[str]) -> ScoreDict:
     """Compute deterministic evaluation metrics for one prediction."""
     return ScoreDict(
         em=_exact_match(prediction, gold),
-        f1=_token_f1(prediction, gold),
+        f1=token_f1(prediction, gold),
         faithfulness=_faithfulness(prediction, passages),
         cost_tokens=sum(count_tokens(p) for p in passages),
     )

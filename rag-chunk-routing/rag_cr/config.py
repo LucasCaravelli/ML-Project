@@ -51,14 +51,26 @@ class GenerationConfig:
 
 
 @dataclass(frozen=True)
+class QAModelsConfig:
+    factoid_question: str
+    multihop_question: str
+    synthesis_question: str
+    answer: str
+    judge: str
+
+
+@dataclass(frozen=True)
 class QAGenerationConfig:
     provider: str
-    model_name: str
+    models: QAModelsConfig
     question_temperature: float
     answer_temperature: float
+    judge_temperature: float
     max_tokens: int
     request_timeout_s: int
     max_retries: int
+    primary_only_f1_threshold: float
+    max_topup_rounds: int
 
 
 @dataclass(frozen=True)
@@ -80,9 +92,12 @@ class RouterConfig:
 
 @dataclass(frozen=True)
 class PromptsConfig:
-    qa_generation: Path
+    qa_generation_factoid: Path
+    qa_generation_multihop: Path
+    qa_generation_synthesis: Path
     qa_answer: Path
     answer: Path
+    judge: Path
 
 
 @dataclass(frozen=True)
@@ -129,12 +144,26 @@ def load_config(config_path: str | Path = "configs/base.yaml") -> Config:
             source_chunk_size=raw["qa"]["source_chunk_size"],
             neighbor_window=raw["qa"]["neighbor_window"],
             type_distribution=raw["qa"]["type_distribution"],
-            generation=QAGenerationConfig(**raw["qa"]["generation"]),
+            generation=QAGenerationConfig(
+                provider=raw["qa"]["generation"]["provider"],
+                models=QAModelsConfig(**raw["qa"]["generation"]["models"]),
+                question_temperature=raw["qa"]["generation"]["question_temperature"],
+                answer_temperature=raw["qa"]["generation"]["answer_temperature"],
+                judge_temperature=raw["qa"]["generation"]["judge_temperature"],
+                max_tokens=raw["qa"]["generation"]["max_tokens"],
+                request_timeout_s=raw["qa"]["generation"]["request_timeout_s"],
+                max_retries=raw["qa"]["generation"]["max_retries"],
+                primary_only_f1_threshold=raw["qa"]["generation"]["primary_only_f1_threshold"],
+                max_topup_rounds=raw["qa"]["generation"]["max_topup_rounds"],
+            ),
         ),
         router=RouterConfig(**raw["router"]),
         prompts=PromptsConfig(
-            qa_generation=Path(raw["prompts"]["qa_generation"]),
+            qa_generation_factoid=Path(raw["prompts"]["qa_generation_factoid"]),
+            qa_generation_multihop=Path(raw["prompts"]["qa_generation_multihop"]),
+            qa_generation_synthesis=Path(raw["prompts"]["qa_generation_synthesis"]),
             qa_answer=Path(raw["prompts"]["qa_answer"]),
             answer=Path(raw["prompts"]["answer"]),
+            judge=Path(raw["prompts"]["judge"]),
         ),
     )

@@ -1,0 +1,54 @@
+You are generating a single high-quality MULTIHOP question for a retrieval-augmented generation benchmark.
+
+Later, smaller models will try to answer your question by retrieving chunks from the corpus, so the question must be answerable ONLY from the provided source text — do not rely on outside knowledge.
+
+Do NOT write the answer. Only produce the question. The answer will be generated separately in a follow-up step.
+
+Question type: multihop
+- A multihop question requires combining two or more distinct facts across the PRIMARY chunk and the NEIGHBOR chunks.
+- Downstream answer generation will cap the answer at ≤ 15 words, so the question must be phrased so a correct answer fits within that cap. This cap is a downstream constraint, not the optimization target — the priority is retrieval dependence, not brevity.
+
+PRIMARY chunk (the question MUST be anchored here):
+<<<
+{primary_chunk}
+>>>
+
+NEIGHBOR chunks (additional context required for multihop):
+<<<
+{neighbor_chunks}
+>>>
+
+Hard requirements:
+1. The answer must require AT LEAST TWO DISTINCT supporting statements.
+2. Those statements must come from different chunks, or from clearly distinct pieces of provided context.
+3. If either supporting statement is removed, the answer should no longer be recoverable.
+4. Reject the question if the PRIMARY chunk alone is enough.
+5. Reject the question if any single chunk alone is enough.
+6. Skip if the question would still be answerable after removing the NEIGHBOR chunks.
+7. Prefer questions about relationships, consequences, comparisons, dependencies, or linking two entities/facts.
+8. Do not ask meta-questions about the text itself. Ask about the content.
+9. Do not leak the answer phrasing inside the question.
+10. Avoid ambiguous references such as unclear pronouns, "the method," "the model," or "this result" unless uniquely identifiable from the question alone.
+11. Do not invent names, numbers, entities, relationships, or cross-chunk links not supported by the text.
+12. Use the terminology from the text for factual accuracy and grounding, but do not force maximal lexical overlap if that would make the question overly extractive or trivial.
+13. Keep the question under 35 words.
+14. Prefer concise questions, but prioritize retrieval dependence over brevity. Forms about relationships, comparisons, causes, conditions, roles, or trade-offs are preferred over simple entity/date/number lookup.
+15. The question is only valid if a correct answer fits within ≤ 15 words. If no such question is possible for this chunk, skip.
+
+Internal validity check (perform silently before producing the final JSON):
+1. The answer is fully supported by the text.
+2. At least two distinct supporting statements are required.
+3. The question is not answerable from one sentence alone.
+4. The question is not answerable from the PRIMARY chunk alone.
+5. The question is not a simple lookup disguised as a harder type.
+If any check fails, skip.
+
+Skip rule:
+If the provided text does not support a clearly valid multihop question, skip. It is better to skip than to produce a borderline or weak question. Use:
+{{"skip": true, "reason": "<short reason>"}}
+
+Output format — respond with a single JSON object on one line, no prose, no code fences:
+{{"question": "<the question>"}}
+
+Or, if the chunk is unsuitable:
+{{"skip": true, "reason": "<short reason>"}}

@@ -18,9 +18,9 @@ log = get_logger(__name__)
 def _render_question_prompt(
     template: str, *, question_type: str, primary: str, neighbors: list[str]
 ) -> str:
+    del question_type  # per-type templates hardcode the type in prose; no placeholder
     neighbor_block = "\n\n---\n\n".join(neighbors) if neighbors else "(none)"
     return template.format(
-        question_type=question_type,
         primary_chunk=primary,
         neighbor_chunks=neighbor_block,
     )
@@ -62,7 +62,9 @@ def _targets_from_distribution(n: int, dist: dict[str, float]) -> dict[str, int]
     return floors
 
 
-def _call_openai(prompt: str, cfg: QAGenerationConfig, temperature: float) -> str:
+def _call_openai(
+    prompt: str, model: str, cfg: QAGenerationConfig, temperature: float
+) -> str:
     from openai import AuthenticationError, OpenAI
 
     api_key = os.environ.get("OPENAI_API_KEY")
@@ -76,9 +78,8 @@ def _call_openai(prompt: str, cfg: QAGenerationConfig, temperature: float) -> st
     for attempt in range(cfg.max_retries):
         try:
             resp = client.chat.completions.create(
-                model=cfg.model_name,
-                temperature=temperature,
-                max_tokens=cfg.max_tokens,
+                model=model,
+                max_completion_tokens=cfg.max_tokens,
                 messages=[{"role": "user", "content": prompt}],
                 response_format={"type": "json_object"},
             )
@@ -100,6 +101,16 @@ def _call_openai(prompt: str, cfg: QAGenerationConfig, temperature: float) -> st
     raise RuntimeError(f"OpenAI call failed after {cfg.max_retries} attempts: {last_err}")
 
 
+def _question_model(gen_cfg: QAGenerationConfig, qtype: str) -> str:
+    if qtype == "factoid":
+        return gen_cfg.models.factoid_question
+    if qtype == "multihop":
+        return gen_cfg.models.multihop_question
+    if qtype == "synthesis":
+        return gen_cfg.models.synthesis_question
+    raise ValueError(f"Unknown question type: {qtype!r}")
+
+
 def _parse_response(raw: str) -> dict | None:
     try:
         obj = json.loads(raw)
@@ -110,7 +121,7 @@ def _parse_response(raw: str) -> dict | None:
 
 def _build_work_list(
     targets: dict[str, int],
-    n_chunks: int,
+    available_indices: list[int],
     rng: random.Random,
 ) -> list[tuple[str, int]]:
     """Build a round-robin interleaved work list of (type, chunk_idx) pairs.
@@ -120,11 +131,14 @@ def _build_work_list(
     types interleave in the output so a reviewer sees a mix rather than a
     block of factoids followed by a block of multihops.
     """
+    if not available_indices:
+        return []
+    n_avail = len(available_indices)
     per_type: dict[str, list[tuple[str, int]]] = {}
     for qtype, count in targets.items():
-        shuffled = list(range(n_chunks))
+        shuffled = list(available_indices)
         rng.shuffle(shuffled)
-        per_type[qtype] = [(qtype, shuffled[i % n_chunks]) for i in range(count)]
+        per_type[qtype] = [(qtype, shuffled[i % n_avail]) for i in range(count)]
 
     iters = {qtype: iter(items) for qtype, items in per_type.items()}
     work: list[tuple[str, int]] = []
@@ -143,10 +157,13 @@ def _build_work_list(
 def generate_qa(
     chunks_path: str | Path,
     qa_cfg: QAConfig,
-    question_prompt_path: str | Path,
+    question_prompt_paths: dict[str, str | Path],
     answer_prompt_path: str | Path,
     limit: int | None = None,
     seed: int | None = None,
+    qa_id_offset: int = 0,
+    exclude_chunk_ids: set[str] | None = None,
+    type_override: str | None = None,
 ) -> list[QAPair]:
     """Generate a stratified first-pass batch of synthetic QA pairs from chunks.
 
@@ -159,6 +176,11 @@ def generate_qa(
     ``validated=False`` for downstream human review.
 
     Pass ``seed`` for reproducible stratification and chunk selection.
+    Pass ``qa_id_offset`` to start qa_id numbering from a given index — used
+    when resuming generation so new ids don't collide with previously decided
+    ones. Pass ``exclude_chunk_ids`` to skip chunks already mined for QA.
+    Pass ``type_override`` to restrict generation to a single type (used by
+    the per-type top-up loop in filter_qa.py).
     """
     gen_cfg = qa_cfg.generation
     if gen_cfg.provider != "openai":
@@ -172,13 +194,43 @@ def generate_qa(
     if not chunks:
         raise ValueError(f"No chunks found at {chunks_path}")
 
-    q_template = read_text(question_prompt_path)
+    if type_override is not None:
+        if type_override not in qa_cfg.type_distribution:
+            raise ValueError(
+                f"type_override={type_override!r} is not in type_distribution "
+                f"keys {sorted(qa_cfg.type_distribution)}."
+            )
+        distribution = {type_override: 1.0}
+    else:
+        distribution = qa_cfg.type_distribution
+
+    missing_types = set(distribution) - set(question_prompt_paths)
+    if missing_types:
+        raise ValueError(
+            f"question_prompt_paths is missing entries for types: {sorted(missing_types)}. "
+            f"Got keys: {sorted(question_prompt_paths)}."
+        )
+    q_templates = {qtype: read_text(path) for qtype, path in question_prompt_paths.items()}
     a_template = read_text(answer_prompt_path)
-    targets = _targets_from_distribution(n, qa_cfg.type_distribution)
+    targets = _targets_from_distribution(n, distribution)
     log.info("QA generation targets for n=%d: %s", n, targets)
 
+    exclude = exclude_chunk_ids or set()
+    available_indices = [i for i, c in enumerate(chunks) if c["chunk_id"] not in exclude]
+    if not available_indices:
+        raise ValueError(
+            f"No chunks available after excluding {len(exclude)} ids from {len(chunks)} total."
+        )
+    if exclude:
+        log.info(
+            "Excluding %d chunks from sampling pool (%d available, %d total)",
+            len(chunks) - len(available_indices),
+            len(available_indices),
+            len(chunks),
+        )
+
     rng = random.Random(seed)
-    work = _build_work_list(targets, len(chunks), rng)
+    work = _build_work_list(targets, available_indices, rng)
 
     pairs: list[QAPair] = []
     skipped_q = skipped_a = parse_err = missing_field = 0
@@ -191,12 +243,13 @@ def generate_qa(
         )
 
         q_prompt = _render_question_prompt(
-            q_template,
+            q_templates[qtype],
             question_type=qtype,
             primary=primary["text"],
             neighbors=neighbors,
         )
-        q_raw = _call_openai(q_prompt, gen_cfg, gen_cfg.question_temperature)
+        q_model = _question_model(gen_cfg, qtype)
+        q_raw = _call_openai(q_prompt, q_model, gen_cfg, gen_cfg.question_temperature)
         q_parsed = _parse_response(q_raw)
         if q_parsed is None:
             parse_err += 1
@@ -234,7 +287,7 @@ def generate_qa(
             primary=primary["text"],
             neighbors=neighbors,
         )
-        a_raw = _call_openai(a_prompt, gen_cfg, gen_cfg.answer_temperature)
+        a_raw = _call_openai(a_prompt, gen_cfg.models.answer, gen_cfg, gen_cfg.answer_temperature)
         a_parsed = _parse_response(a_raw)
         if a_parsed is None:
             parse_err += 1
@@ -269,7 +322,7 @@ def generate_qa(
 
         pairs.append(
             QAPair(
-                qa_id=f"qa_{i:04d}",
+                qa_id=f"qa_{qa_id_offset + i:04d}",
                 question=question,
                 answer=answer,
                 source_chunk_id=primary["chunk_id"],
