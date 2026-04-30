@@ -31,6 +31,14 @@ artifacts/qa/*
 !artifacts/qa/qa_raw.jsonl
 !artifacts/qa/qa_validated.jsonl
 !artifacts/qa/qa_rejected.jsonl
+# Splits are deterministic from validated QA + seed, but committing them
+# guarantees identical splits across local + cluster runs.
+!artifacts/splits/
+artifacts/splits/*
+!artifacts/splits/train.jsonl
+!artifacts/splits/val.jsonl
+!artifacts/splits/test.jsonl
+!artifacts/splits/manifest.json
 
 # Results — all per-run outputs ignored
 results/runs/
