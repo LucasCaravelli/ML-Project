@@ -32,9 +32,8 @@ artifacts/qa/*
 !artifacts/qa/qa_validated.jsonl
 !artifacts/qa/qa_rejected.jsonl
 
-# Results (large per-run outputs ignored; small summaries committed)
-results/runs/*/predictions.jsonl
-results/runs/*/log.txt
+# Results — all per-run outputs ignored
+results/runs/
 
 # API keys for QA generation (OpenAI, Anthropic) or Ollama endpoints must never
 # be committed. Keep them in .env (loaded via python-dotenv or similar).

@@ -1,0 +1,72 @@
+project:
+  name: rag-chunk-routing
+  seed: 42
+
+paths:
+  corpus: data/corpus.txt
+  artifacts_dir: artifacts
+  results_dir: results
+
+chunking:
+  sizes: [128, 256, 512, 1024]
+  overlaps:
+    128: 16
+    256: 32
+    512: 64
+    1024: 128
+
+embedding:
+  model_name: BAAI/bge-small-en-v1.5
+  device: cpu
+  batch_size: 64
+  normalize: true
+
+retrieval:
+  top_k: 5
+  fusion_constant: 60
+
+# extractive backend requires no external server — good for CI and offline testing.
+generation:
+  backend: extractive
+  model_name: none
+  max_new_tokens: 256
+  temperature: 0.0
+
+qa:
+  target_count: 400
+  initial_batch_size: 150
+  source_chunk_size: 512
+  neighbor_window: 1
+  type_distribution:
+    factoid: 0.3334
+    multihop: 0.3333
+    synthesis: 0.3333
+  generation:
+    provider: openai
+    models:
+      factoid_question: gpt-5.4-mini
+      multihop_question: gpt-5.5
+      synthesis_question: gpt-5.5
+      answer: gpt-5.5
+      judge: gpt-5.5
+    question_temperature: 0.4
+    answer_temperature: 0.1
+    judge_temperature: 0.0
+    max_tokens: 8000
+    request_timeout_s: 120
+    max_retries: 3
+    primary_only_f1_threshold: 0.8
+    max_topup_rounds: 3
+
+router:
+  feature_sets: [tfidf, minilm, handcrafted]
+  model_names: [logreg, svm_linear, lightgbm]
+  cv_folds: 5
+
+prompts:
+  qa_generation_factoid: prompts/qa_generation_factoid.txt
+  qa_generation_multihop: prompts/qa_generation_multihop.txt
+  qa_generation_synthesis: prompts/qa_generation_synthesis.txt
+  qa_answer: prompts/qa_answer.txt
+  answer: prompts/answer.txt
+  judge: prompts/judge.txt
