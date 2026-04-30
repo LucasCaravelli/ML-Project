@@ -22,6 +22,9 @@ dev = [
     "ruff",
     "black",
 ]
+cluster = [
+    "vllm",
+]
 
 [build-system]
 requires = ["hatchling"]

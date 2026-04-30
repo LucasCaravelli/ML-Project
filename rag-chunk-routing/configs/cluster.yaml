@@ -1,4 +1,9 @@
-# TODO: Centralize every hyperparameter used anywhere in the pipeline (chunking, embedding, retrieval, generation, QA generation, router). No default values should live in Python code.
+# Cluster (Bocconi A100 MIG slice) overrides of base.yaml.
+# Identical to base except:
+#   - generation.backend = vllm  (Ollama isn't available on compute nodes)
+#   - generation.model_name = the HF model id (vLLM pulls from HF, not Ollama)
+#   - embedding.device = cuda  (the GPU is right there; faster than CPU)
+#   - embedding.batch_size  = 256
 
 project:
   name: rag-chunk-routing
@@ -19,8 +24,8 @@ chunking:
 
 embedding:
   model_name: BAAI/bge-small-en-v1.5
-  device: cpu
-  batch_size: 64 # Adjust to available RAM/CPU throughput if embedding runs are unstable.
+  device: cuda
+  batch_size: 256
   normalize: true
 
 retrieval:
@@ -32,8 +37,8 @@ splits:
   stratify_by: type
 
 generation:
-  backend: ollama
-  model_name: qwen2.5:7b-instruct
+  backend: vllm
+  model_name: Qwen/Qwen2.5-7B-Instruct
   max_new_tokens: 256
   temperature: 0.0
 

@@ -1,19 +1,142 @@
-# TODO: Orchestrate the oracle labeling pass over the validated QA set.
-
 from __future__ import annotations
 
 import argparse
+import sys
+from pathlib import Path
+from typing import Any
 
-from rag_cr import Config, load_config, set_seed
+from rag_cr import Config, get_logger, load_config, set_seed
+from rag_cr.generation import build_prompt, generate_batch
+from rag_cr.io import ensure_dir, read_jsonl, write_jsonl
+from rag_cr.metrics import score
+from rag_cr.oracle import label_from_grid
+from rag_cr.retrieval import Retriever
+from rag_cr.splits import SPLIT_NAMES
 
 
-def main(config: Config) -> None:
+def _split_path(artifacts_dir: Path, name: str) -> Path:
+    return artifacts_dir / "splits" / f"{name}.jsonl"
+
+
+def _eval_grid_path(artifacts_dir: Path) -> Path:
+    return artifacts_dir / "oracle" / "eval_grid.jsonl"
+
+
+def _oracle_labels_path(artifacts_dir: Path) -> Path:
+    return artifacts_dir / "oracle" / "labels.jsonl"
+
+
+def _parse_splits(arg: str) -> list[str]:
+    parts = [p.strip() for p in arg.split(",") if p.strip()]
+    if not parts:
+        raise argparse.ArgumentTypeError("--splits cannot be empty")
+    if "all" in parts:
+        return list(SPLIT_NAMES)
+    unknown = [p for p in parts if p not in SPLIT_NAMES]
+    if unknown:
+        raise argparse.ArgumentTypeError(
+            f"unknown split(s): {unknown}. Valid: {list(SPLIT_NAMES)} or 'all'"
+        )
+    return parts
+
+
+def _load_splits(artifacts_dir: Path, names: list[str]) -> list[dict[str, Any]]:
+    rows: list[dict[str, Any]] = []
+    for name in names:
+        path = _split_path(artifacts_dir, name)
+        if not path.exists():
+            raise FileNotFoundError(
+                f"Split file not found: {path}. Run experiments/make_splits.py first."
+            )
+        for row in read_jsonl(path):
+            row.setdefault("split", name)
+            rows.append(row)
+    return rows
+
+
+def _merge_grid_rows(
+    existing: list[dict[str, Any]], new_rows: list[dict[str, Any]]
+) -> list[dict[str, Any]]:
+    """Dedup on (qa_id, chunk_size); newer rows overwrite older ones."""
+    by_key: dict[tuple[str, int], dict[str, Any]] = {}
+    for row in existing:
+        by_key[(row["qa_id"], int(row["chunk_size"]))] = row
+    for row in new_rows:
+        by_key[(row["qa_id"], int(row["chunk_size"]))] = row
+    return [by_key[k] for k in sorted(by_key)]
+
+
+def main(config: Config, splits: list[str]) -> None:
     set_seed(config.project.seed)
-    raise NotImplementedError
+    log = get_logger(__name__)
+
+    artifacts_dir = config.paths.artifacts_dir
+    sizes = config.chunking.sizes
+    top_k = config.retrieval.top_k
+
+    qa_rows = _load_splits(artifacts_dir, splits)
+    log.info("Loaded %d QA rows across splits=%s", len(qa_rows), splits)
+
+    log.info("Building retriever and prompts (top_k=%d, sizes=%s)…", top_k, sizes)
+    retriever = Retriever(config)
+    pending: list[tuple[dict[str, Any], int, list[str], str]] = []
+    for qa in qa_rows:
+        for size in sizes:
+            chunks = retriever.retrieve(qa["question"], size, top_k)
+            passages = [c["text"] for c in chunks]
+            prompt = build_prompt(qa["question"], passages, config)
+            pending.append((qa, size, passages, prompt))
+    log.info("Built %d prompts (qa=%d × sizes=%d)", len(pending), len(qa_rows), len(sizes))
+
+    log.info("Generating with backend=%s model=%s", config.generation.backend, config.generation.model_name)
+    predictions = generate_batch([p[3] for p in pending], config)
+    if len(predictions) != len(pending):
+        log.error("generate_batch returned %d predictions for %d prompts", len(predictions), len(pending))
+        sys.exit(2)
+
+    log.info("Scoring %d predictions", len(predictions))
+    new_rows: list[dict[str, Any]] = []
+    for (qa, size, passages, _), pred in zip(pending, predictions):
+        s = score(pred, qa["answer"], passages)
+        new_rows.append(
+            {
+                "qa_id": qa["qa_id"],
+                "chunk_size": size,
+                "split": qa["split"],
+                "type": qa["type"],
+                "question": qa["question"],
+                "gold": qa["answer"],
+                "prediction": pred,
+                "passages": passages,
+                "em": s["em"],
+                "f1": s["f1"],
+                "faithfulness": s["faithfulness"],
+                "cost_tokens": s["cost_tokens"],
+            }
+        )
+
+    grid_path = _eval_grid_path(artifacts_dir)
+    ensure_dir(grid_path.parent)
+    existing = read_jsonl(grid_path) if grid_path.exists() else []
+    merged = _merge_grid_rows(existing, new_rows)
+    write_jsonl(grid_path, merged)
+    log.info("Eval grid: existing=%d new=%d total=%d → %s",
+             len(existing), len(new_rows), len(merged), grid_path)
+
+    labels = label_from_grid(merged)
+    labels_path = _oracle_labels_path(artifacts_dir)
+    write_jsonl(labels_path, [dict(label) for label in labels])
+    log.info("Oracle labels: %d → %s", len(labels), labels_path)
 
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--config", default="configs/base.yaml")
+    parser.add_argument(
+        "--splits",
+        default="test",
+        type=_parse_splits,
+        help="Comma-separated split names to score (test|train|val|all). Default: test",
+    )
     args = parser.parse_args()
-    main(load_config(args.config))
+    main(load_config(args.config), splits=args.splits)

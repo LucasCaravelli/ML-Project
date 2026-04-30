@@ -43,6 +43,12 @@ class RetrievalConfig:
 
 
 @dataclass(frozen=True)
+class SplitsConfig:
+    ratios: dict[str, float]
+    stratify_by: str
+
+
+@dataclass(frozen=True)
 class GenerationConfig:
     backend: str
     model_name: str
@@ -107,6 +113,7 @@ class Config:
     chunking: ChunkingConfig
     embedding: EmbeddingConfig
     retrieval: RetrievalConfig
+    splits: SplitsConfig
     generation: GenerationConfig
     qa: QAConfig
     router: RouterConfig
@@ -137,6 +144,7 @@ def load_config(config_path: str | Path = "configs/base.yaml") -> Config:
         chunking=ChunkingConfig(**raw["chunking"]),
         embedding=EmbeddingConfig(**raw["embedding"]),
         retrieval=RetrievalConfig(**raw["retrieval"]),
+        splits=SplitsConfig(**raw["splits"]),
         generation=GenerationConfig(**raw["generation"]),
         qa=QAConfig(
             target_count=raw["qa"]["target_count"],

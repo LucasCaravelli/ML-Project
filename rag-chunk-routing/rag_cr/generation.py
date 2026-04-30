@@ -3,6 +3,7 @@ from __future__ import annotations
 import re
 import string
 from pathlib import Path
+from typing import Any
 
 from .config import Config, load_config
 
@@ -12,6 +13,8 @@ _FALLBACK_TEMPLATE = (
     "Question: {question}\n\n"
     "Answer:"
 )
+
+_VLLM_CACHE: dict[str, Any] = {}
 
 
 def _build_prompt(query: str, passages: list[str], template: str) -> str:
@@ -23,6 +26,16 @@ def _build_prompt(query: str, passages: list[str], template: str) -> str:
         question=query,
         retrieved_context=context,
     )
+
+
+def _load_template(cfg: Config) -> str:
+    prompt_path = cfg.prompts.answer
+    return prompt_path.read_text(encoding="utf-8") if prompt_path.exists() else _FALLBACK_TEMPLATE
+
+
+def build_prompt(query: str, passages: list[str], cfg: Config) -> str:
+    """Public helper so callers can build prompts before batching."""
+    return _build_prompt(query, passages, _load_template(cfg))
 
 
 def _extractive(query: str, passages: list[str]) -> str:
@@ -48,6 +61,67 @@ def _extractive(query: str, passages: list[str]) -> str:
     return best_sentence.strip() if best_sentence else (passages[0][:200] if passages else "")
 
 
+def _get_vllm(model_name: str) -> Any:
+    if model_name not in _VLLM_CACHE:
+        from vllm import LLM  # imported lazily so local dev doesn't need vllm
+
+        _VLLM_CACHE[model_name] = LLM(
+            model=model_name,
+            dtype="bfloat16",
+            max_model_len=4096,
+            gpu_memory_utilization=0.85,
+        )
+    return _VLLM_CACHE[model_name]
+
+
+def _generate_vllm(prompts: list[str], cfg: Config) -> list[str]:
+    from vllm import SamplingParams
+
+    llm = _get_vllm(cfg.generation.model_name)
+    params = SamplingParams(
+        temperature=cfg.generation.temperature,
+        max_tokens=cfg.generation.max_new_tokens,
+    )
+    outputs = llm.generate(prompts, params)
+    by_prompt = {o.prompt: o.outputs[0].text.strip() for o in outputs}
+    return [by_prompt[p] for p in prompts]
+
+
+def _generate_ollama(prompts: list[str], cfg: Config) -> list[str]:
+    import ollama
+
+    results: list[str] = []
+    for prompt in prompts:
+        response = ollama.chat(
+            model=cfg.generation.model_name,
+            messages=[{"role": "user", "content": prompt}],
+            options={
+                "num_predict": cfg.generation.max_new_tokens,
+                "temperature": cfg.generation.temperature,
+            },
+        )
+        results.append(response["message"]["content"].strip())
+    return results
+
+
+def generate_batch(prompts: list[str], cfg: Config) -> list[str]:
+    """Generate answers for many prompts in one pass.
+
+    vLLM batches with continuous decoding; Ollama loops one-at-a-time;
+    the extractive backend takes no prompts (it'll error here — use
+    `generate()` instead for that backend since it doesn't need a prompt
+    template).
+    """
+    if not prompts:
+        return []
+    backend = cfg.generation.backend
+    if backend == "vllm":
+        return _generate_vllm(prompts, cfg)
+    if backend == "ollama":
+        return _generate_ollama(prompts, cfg)
+    raise ValueError(f"generate_batch does not support backend {backend!r}")
+
+
 def generate(
     query: str,
     passages: list[str],
@@ -58,46 +132,8 @@ def generate(
     if config is None:
         config = load_config(config_path)
 
-    backend     = config.generation.backend
-    model_name  = config.generation.model_name
-    max_tokens  = config.generation.max_new_tokens
-    temperature = config.generation.temperature
-    prompt_path = config.prompts.answer
-
-    if backend == "extractive":
+    if config.generation.backend == "extractive":
         return _extractive(query, passages)
 
-    template = (
-        prompt_path.read_text(encoding="utf-8")
-        if prompt_path.exists()
-        else _FALLBACK_TEMPLATE
-    )
-    prompt = _build_prompt(query, passages, template)
-
-    if backend == "ollama":
-        import ollama  # optional dep; only needed at inference time
-
-        response = ollama.chat(
-            model=model_name,
-            messages=[{"role": "user", "content": prompt}],
-            options={
-                "num_predict": max_tokens,
-                "temperature": temperature,
-            },
-        )
-        return response["message"]["content"].strip()
-
-    raise ValueError(f"Unsupported generation backend: {backend!r}")
-
-# generation.py — fully implemented:                                                                                     
-#   - generate(query, passages, cfg, prompt_path) accepts a GenerationConfig (from the YAML) and an optional path to the   
-#   answer prompt template                                                                                               
-#   - _build_prompt formats passages as numbered context blocks and fills the {context}/{query} placeholders               
-#   - _call_ollama uses the ollama Python library with chat() (appropriate for qwen2.5:7b-instruct), passing num_predict 
-#   and temperature from config                                                                                          
-#   - Raises ValueError for unsupported backends
-
-#   prompts/answer.txt — filled in with a concise RAG answer prompt using {context} and {query} placeholders.
-
-#   config.py — fixed a pre-existing bug: ChunkingConfig.overlap: int → overlaps: dict[int, int] to match the YAML
-#   structure.
+    prompt = build_prompt(query, passages, config)
+    return generate_batch([prompt], config)[0]
