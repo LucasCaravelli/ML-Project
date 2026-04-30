@@ -3,54 +3,36 @@ from __future__ import annotations
 from pathlib import Path
 
 from .config import Config, load_config
-from .io import create_run_dir, read_jsonl, write_json, write_jsonl
+from .io import create_run_dir, get_qa_validated_path, read_jsonl, write_json, write_jsonl
 from .metrics import score
 from .systems import build_system
 from .types import QAPair, ScoreDict
 
 
-_FAKE_QA: list[QAPair] = [
-    {
-        "qa_id": "fake_001",
-        "question": "What is retrieval-augmented generation?",
-        "answer": "RAG combines retrieval with generation to produce grounded answers.",
-        "source_chunk_id": "chunk_256_0",
-        "type": "factoid",
-        "validated": True,
-    },
-    {
-        "qa_id": "fake_002",
-        "question": "How does chunk size affect retrieval quality?",
-        "answer": "Smaller chunks increase precision while larger chunks improve recall.",
-        "source_chunk_id": "chunk_512_0",
-        "type": "synthesis",
-        "validated": True,
-    },
-    {
-        "qa_id": "fake_003",
-        "question": "What is reciprocal rank fusion?",
-        "answer": "RRF merges ranked lists from multiple retrievers using a harmonic formula.",
-        "source_chunk_id": "chunk_128_0",
-        "type": "factoid",
-        "validated": True,
-    },
-]
+def _load_qa(qa_path: str | Path | None, config: Config) -> list[QAPair]:
+    p = Path(qa_path) if qa_path is not None else get_qa_validated_path(config.paths.artifacts_dir)
+    if not p.exists():
+        raise FileNotFoundError(
+            f"QA file not found at {p}. "
+            "Run experiments/validate_qa.py first, or pass an explicit qa_path."
+        )
+    return [QAPair(**row) for row in read_jsonl(p)]  # type: ignore[misc]
 
 
-def _load_qa(qa_path: str | Path) -> list[QAPair]:
-    p = Path(qa_path)
-    if p.exists():
-        return [QAPair(**row) for row in read_jsonl(p)]  # type: ignore[misc]
-    return list(_FAKE_QA)
-
-
-def run(system_name: str, qa_path: str | Path, config: Config | None = None) -> Path:
+def run(
+    system_name: str,
+    qa_path: str | Path | None = None,
+    config: Config | None = None,
+    limit: int | None = None,
+) -> Path:
     """Run one evaluation system over a QA set and return the results directory."""
     if config is None:
         config = load_config()
 
     system = build_system(system_name, config)
-    qa_pairs = _load_qa(qa_path)
+    qa_pairs = _load_qa(qa_path, config)
+    if limit is not None:
+        qa_pairs = qa_pairs[:limit]
 
     run_dir = create_run_dir(config.paths.results_dir, system_name)
     predictions: list[dict] = []
