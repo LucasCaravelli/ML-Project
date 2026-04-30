@@ -39,7 +39,7 @@ def run(
     all_scores: list[ScoreDict] = []
 
     for qa in qa_pairs:
-        prediction, passages = system.answer(qa["question"])
+        prediction, passages = system.answer(qa["question"], qa_id=qa["qa_id"])
         s = score(prediction, qa["answer"], passages)
         all_scores.append(s)
         predictions.append({

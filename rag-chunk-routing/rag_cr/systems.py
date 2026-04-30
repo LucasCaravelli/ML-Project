@@ -10,7 +10,7 @@ from .retrieval import Retriever
 class System(Protocol):
     name: str
 
-    def answer(self, query: str) -> tuple[str, list[str]]:
+    def answer(self, query: str, qa_id: str | None = None) -> tuple[str, list[str]]:
         """Return (prediction, passages_used) for a query."""
         ...
 
@@ -32,8 +32,10 @@ class _BaseSystem:
     def _predict(self, query: str, passages: list[str]) -> str:
         try:
             return generate(query, passages, config=self._config)
-        except Exception:
-            return f"[MOCK] Answer to: {query!r}"
+        except ImportError:
+            # Optional backend (e.g. ollama) not installed; caller should configure
+            # an available backend such as 'extractive'.
+            raise
 
 
 class FixedSizeSystem(_BaseSystem):
@@ -43,7 +45,7 @@ class FixedSizeSystem(_BaseSystem):
         super().__init__(f"fixed_{chunk_size}", config)
         self.chunk_size = chunk_size
 
-    def answer(self, query: str) -> tuple[str, list[str]]:
+    def answer(self, query: str, qa_id: str | None = None) -> tuple[str, list[str]]:
         passages = self._retrieve(query, self.chunk_size)
         return self._predict(query, passages), passages
 
@@ -54,7 +56,7 @@ class FusionSystem(_BaseSystem):
     def __init__(self, config: Config) -> None:
         super().__init__("fusion", config)
 
-    def answer(self, query: str) -> tuple[str, list[str]]:
+    def answer(self, query: str, qa_id: str | None = None) -> tuple[str, list[str]]:
         passages = self._retrieve(query, "fusion")
         return self._predict(query, passages), passages
 
@@ -90,7 +92,7 @@ class RouterSystem(_BaseSystem):
     def __init__(self, config: Config) -> None:
         super().__init__("router", config)
 
-    def answer(self, query: str) -> tuple[str, list[str]]:
+    def answer(self, query: str, qa_id: str | None = None) -> tuple[str, list[str]]:
         fallback_size = self._config.chunking.sizes[-1]
         passages = self._retrieve(query, fallback_size)
         return self._predict(query, passages), passages
