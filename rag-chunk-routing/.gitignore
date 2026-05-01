@@ -39,6 +39,19 @@ artifacts/splits/*
 !artifacts/splits/val.jsonl
 !artifacts/splits/test.jsonl
 !artifacts/splits/manifest.json
+# Oracle labels + eval grid: deterministic from validated QA + indices + seed,
+# but expensive to regenerate (~15 min A100). Coder C needs labels.jsonl as
+# the router's training target.
+!artifacts/oracle/
+artifacts/oracle/*
+!artifacts/oracle/eval_grid.jsonl
+!artifacts/oracle/labels.jsonl
+# Baseline + oracle-gap reports — small JSON, useful for write-up.
+!artifacts/baselines/
+artifacts/baselines/*
+!artifacts/baselines/oracle_gap.json
+!artifacts/baselines/size_distribution.json
+!artifacts/baselines/test_summary.json
 
 # Results — all per-run outputs ignored
 results/runs/
