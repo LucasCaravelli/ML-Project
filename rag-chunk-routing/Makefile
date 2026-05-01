@@ -1,6 +1,10 @@
 PY := python
 CONFIG := configs/base.yaml
 
+# macOS: LightGBM requires libomp which Homebrew installs but doesn't add to the default rpath.
+# On Linux this is a no-op; on macOS it points the dynamic linker to the Homebrew libomp.
+export DYLD_LIBRARY_PATH := /opt/homebrew/opt/libomp/lib:$(DYLD_LIBRARY_PATH)
+
 .PHONY: all indices qa qa-generate qa-filter qa-validate oracle baselines fusion router frontier clean clean-qa test lint format
 
 all: frontier
