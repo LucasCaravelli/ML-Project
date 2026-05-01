@@ -41,7 +41,7 @@ def main(config: Config, config_path: str) -> None:
     out_dir = artifacts_dir / "router"
     out_dir.mkdir(parents=True, exist_ok=True)
 
-    chunk_sizes: list[int] = [s for s in config.chunking.sizes if s != 1024]
+    chunk_sizes: list[int] = list(config.chunking.sizes)
     print(f"Router chunk classes : {chunk_sizes}")
 
     if not oracle_path.exists():

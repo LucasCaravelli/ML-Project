@@ -101,7 +101,7 @@ def main(config: Config, config_path: str) -> None:
     if best_config_path.exists():
         best_config_meta = json.loads(best_config_path.read_text())
 
-    chunk_sizes: list[int] = [s for s in config.chunking.sizes if s != 1024]
+    chunk_sizes: list[int] = list(config.chunking.sizes)
 
     print("Loading test split …")
     test_q, test_t, test_l = load_router_data(splits_dir, oracle_path, "test", chunk_sizes)
@@ -109,6 +109,7 @@ def main(config: Config, config_path: str) -> None:
 
     # Load raw test rows for qa_id lookup
     test_rows = read_jsonl(splits_dir / "test.jsonl")
+    id_to_question = {r["qa_id"]: r for r in test_rows}
     oracle_rows = read_jsonl(oracle_path)
     oracle_by_id: dict[str, int] = {r["qa_id"]: r["best_size"] for r in oracle_rows}
 
@@ -149,8 +150,6 @@ def main(config: Config, config_path: str) -> None:
         for size in set(int(p) for p in predictions):
             systems[size] = FixedSizeSystem(size, config)
 
-        id_to_question = {r["qa_id"]: r for r in test_rows}
-
         for qa_id, pred_size in zip(filtered_ids, predictions.tolist()):
             row = id_to_question[qa_id]
             system = systems[int(pred_size)]
@@ -180,7 +179,7 @@ def main(config: Config, config_path: str) -> None:
         log.warning("RAG pipeline unavailable (%s) — writing classification results only.", exc)
         pipeline_available = False
         for qa_id, pred_size in zip(filtered_ids, predictions.tolist()):
-            row = id_to_question[qa_id]  # type: ignore[name-defined]
+            row = id_to_question[qa_id]
             pred_rows.append(
                 {
                     "qa_id": qa_id,
