@@ -174,6 +174,18 @@ the router gets very little training signal for a class that is, by the
 table above, the worst single-size baseline anyway. We avoid that by
 narrowing the action space.
 
+Under the restricted action space, the 1024-winners roll almost entirely
+into 128 (`artifacts/baselines/size_distribution.json`):
+
+| split |  **128**  |  256  |  512  |
+| ----: | --------: | ----: | ----: |
+|  test | **82.1%** | 11.9% |  6.0% |
+| train | **83.1%** | 11.0% |  5.9% |
+|   val | **88.3%** |  7.8% |  3.9% |
+
+This concentration is the dominant fact about the routing problem on this
+corpus and is treated separately under "Distribution" below.
+
 ### Cost: the headline gap shrinks but stays well above the healthy threshold
 
 Oracle gap on the test split, before and after dropping 1024 (overall and
@@ -196,6 +208,43 @@ the restricted action space. The cost is honest: factoid is essentially
 unaffected, but multihop and synthesis lose roughly half of their oracle
 headroom. The report should disclose this rather than hide it.
 
+### Distribution: 128 dominates, and the routable headroom is concentrated in factoid
+
+Under the restricted action space, **128 wins the per-question oracle on
+82.1 % of test questions**, with 256 at 11.9 % and 512 at 6.0 %. This
+trips the second branch of `_verdict` (`max_share > 0.60` ⇒ PIVOT)
+even though the gap clears the 3-point healthy threshold; running
+`run_baselines.py` after this commit prints the verdict line "PIVOT --
+gap too small or one chunk size dominates." Both signals are real, and
+the report has to engage with them rather than pick the convenient one.
+
+The honest reading is that **the routing problem on this corpus is not a
+balanced 3-way classification**. It is a majority-class default with
+selective override, and the override is concentrated in one question
+type:
+
+- **Factoid (n = 28 on test)**: best fixed-size F1 = 0.486 (size 128) →
+  oracle F1 = 0.633, **+14.63 F1 points** of routable headroom. The
+  factoid winner distribution across {128, 256, 512} is genuinely mixed
+  (no single size wins more than ~50 %, see
+  `artifacts/oracle/labels.jsonl` filtered by `type=factoid`), so this is
+  where a learned router can plausibly capture real lift.
+- **Multihop (n = 28)**: gap +3.02 pts on top of a low absolute F1
+  (0.125 best-baseline). Small absolute headroom; multihop is bounded by
+  retrieval / generation quality, not by chunking choice.
+- **Synthesis (n = 28)**: gap +2.05 pts on F1 = 0.076. Effectively flat;
+  this question type is too hard for any chunk-size choice to matter
+  much under the current generator.
+
+The router's **real comparator is the majority-class strategy** (always
+pick 128), which already achieves the best fixed-size F1 of 0.213 on
+test. Any router worth shipping has to beat that by a margin large
+enough to justify the routing apparatus, *and* it has to do that on a
+class-imbalanced training distribution. The +8.19-point ceiling is
+honest about how much absolute lift is achievable; the 82.1 %
+concentration is honest about how hard it is to capture. The report
+should lead with both numbers.
+
 ### How to talk about this in the report
 
 A defensible single-paragraph framing for the methods section:
@@ -210,23 +259,36 @@ A defensible single-paragraph framing for the methods section:
 > sizes reduces the test-set oracle gap from +10.61 to +8.19 F1 points
 > overall, with the loss concentrated in multihop and synthesis questions
 > (−2.80 and −3.27 points respectively); factoid is essentially unchanged
-> (−1.19 points). We retain the 1024 chunks and FAISS index in the
-> artifact tree so the ablation that motivates this choice
-> (`artifacts/baselines/*_full.json`) remains exactly reproducible.
+> (−1.19 points). Under the restricted action space, size 128 wins the
+> per-question oracle on 82.1 % of test questions, so the router's hard
+> baseline is the majority-class strategy "always pick 128" (test
+> F1 = 0.213); the +8.19-point oracle ceiling sits above that baseline
+> and is concentrated in factoid (+14.63 pts), with multihop and
+> synthesis contributing little (+3.02 and +2.05 pts). We retain the
+> 1024 chunks and FAISS index in the artifact tree so the ablation that
+> motivates this choice (`artifacts/baselines/*_full.json`) remains
+> exactly reproducible.
 
 A defensible single-paragraph framing for the discussion / limitations
 section:
 
-> Restricting the action space to three sizes leaves measurable oracle
-> headroom on the table for multihop and synthesis questions (roughly
-> half their per-type oracle gap), reflecting that very long contexts
-> sometimes are the right answer for these question types on this corpus.
-> A larger labeled set, or a per-type action-space decision, could
-> recover this. We chose the simpler design because the larger,
-> better-studied 3-class router was a closer fit to the project's
-> originality framing (calibrated cheap classifier vs. fusion baseline)
-> than a brittle 4-class classifier with a 6 %-prior class would have
-> been.
+> Two structural facts limit how much of the +8.19-point oracle ceiling
+> a learned router can plausibly capture on this corpus. First, the
+> oracle distribution is dominated by size 128 (82.1 % of test
+> questions), so the router has to beat a strong majority-class default
+> rather than learn a balanced 3-way decision; the routable headroom is
+> concentrated in factoid questions, where the per-type oracle gap is
+> +14.63 F1 points on top of a non-degenerate fixed-size baseline (best
+> 0.486 vs. oracle 0.633). Second, restricting the action space to three
+> sizes leaves measurable headroom on the table for multihop and
+> synthesis questions (≈ half their full-grid per-type oracle gap),
+> reflecting that very long contexts sometimes are the right answer for
+> these question types on this corpus; a larger labeled set or a
+> per-type action-space decision could recover this. We chose the
+> simpler design because the smaller, better-studied 3-class router was
+> a closer fit to the project's originality framing (calibrated cheap
+> classifier vs. fusion baseline) than a brittle 4-class classifier with
+> a 6 %-prior class would have been.
 
 ### How to reproduce both numbers
 
