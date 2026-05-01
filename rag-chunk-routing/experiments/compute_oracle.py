@@ -72,17 +72,17 @@ def main(config: Config, splits: list[str]) -> None:
 
     artifacts_dir = config.paths.artifacts_dir
     sizes = config.chunking.sizes
-    top_k = config.retrieval.top_k
+    k_by_size = {s: config.retrieval.k_for_size(s) for s in sizes}
 
     qa_rows = _load_splits(artifacts_dir, splits)
     log.info("Loaded %d QA rows across splits=%s", len(qa_rows), splits)
 
-    log.info("Building retriever and prompts (top_k=%d, sizes=%s)…", top_k, sizes)
+    log.info("Building retriever and prompts (k_by_size=%s, sizes=%s)…", k_by_size, sizes)
     retriever = Retriever(config)
     pending: list[tuple[dict[str, Any], int, list[str], str]] = []
     for qa in qa_rows:
         for size in sizes:
-            chunks = retriever.retrieve(qa["question"], size, top_k)
+            chunks = retriever.retrieve(qa["question"], size, k_by_size[size])
             passages = [c["text"] for c in chunks]
             prompt = build_prompt(qa["question"], passages, config)
             pending.append((qa, size, passages, prompt))

@@ -26,6 +26,14 @@ embedding:
 retrieval:
   top_k: 5
   fusion_constant: 60
+  # Per-size k chosen so total context tokens are roughly equal across sizes
+  # (~2.5K tokens). Without this, top_k=5 starves 128 (640 tok) and floods
+  # 1024 (5120 tok), biasing the oracle gap.
+  top_k_by_size:
+    128: 20
+    256: 10
+    512: 5
+    1024: 3
 
 splits:
   ratios: {train: 0.6, val: 0.2, test: 0.2}
