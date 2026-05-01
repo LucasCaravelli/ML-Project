@@ -6,7 +6,7 @@
     "test": 0.2
   },
   "stratify_by": "type",
-  "qa_validated_path": "artifacts\\qa\\qa_validated.jsonl",
+  "qa_validated_path": "artifacts/qa/qa_validated.jsonl",
   "qa_validated_sha256": "c062b3c31f8ec80c5f1a5c4452856b62978a31dac927e21fe42bd6db70c08d0a",
   "qa_validated_count": 398,
   "split_counts": {
@@ -31,5 +31,5 @@
       "synthesis": 28
     }
   },
-  "note": "Total is 398 (not 400) because two qa_ids in qa_raw.jsonl collided due to a now-fixed offset bug in qa_gen.py; the multihop versions were dropped to keep eval_grid content consistent. See README.md."
+  "note": "Total is 398 (not 400) because two qa_ids in qa_raw.jsonl collided due to a now-fixed offset bug in qa_gen.py; the multihop versions were dropped to keep eval_grid content consistent. The split files are a frozen artifact preserved across the dedup so eval_grid.jsonl stays aligned -- do NOT run `make_splits --force`, which would deterministically reshape the splits (237/78/83) and invalidate the eval-grid pairing for ~1 question. See README.md."
 }
