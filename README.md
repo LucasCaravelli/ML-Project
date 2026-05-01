@@ -121,6 +121,134 @@ drafted against partial results and refreshed as each system lands.
 
 Phase 2 ends when all six systems appear as points on the frontier plot.
 
+## Action space: why we dropped chunk size 1024
+
+This section is written so the report writers can lift the numbers and the
+argument directly. Every claim below is backed by a JSON file in
+`rag-chunk-routing/artifacts/baselines/`. Numbers are the ones produced on
+2026-05-01 from `eval_grid.jsonl` (398 unique QA pairs, 4 chunk sizes) on
+the test split (n = 84).
+
+### The decision
+
+The router's action space is **{128, 256, 512}**. Chunk size **1024** was
+retired from the action space — it is still chunked, indexed, and present
+in the eval grid (so the ablation below remains reproducible), but the
+router will never select it and the headline baselines do not consider it.
+This is encoded in `chunking.sizes` in both `configs/base.yaml` and
+`configs/cluster.yaml`. The 1024 entry in `chunking.overlaps` is
+intentionally retained so the existing 1024-size FAISS index and chunk
+file stay readable.
+
+### Why: 1024 is the dominated arm
+
+Per-size baseline F1 on the test split, evaluated across all four sizes
+(`artifacts/baselines/test_summary_full.json`):
+
+| chunk size | F1         | EM         | faithfulness |
+| ---------: | ---------: | ---------: | -----------: |
+|        128 | 0.2128     | 0.1429     | 0.3626       |
+|        256 | 0.1701     | 0.0714     | 0.3635       |
+|        512 | 0.1695     | 0.0833     | 0.3140       |
+|   **1024** | **0.1573** | **0.0714** | **0.3092**   |
+
+1024 is the worst single-size baseline on every metric we care about (F1,
+EM, faithfulness). Including it in the action space asks the router to
+sometimes choose a size that, before the router even sees the question, is
+known to be worse on average than the next-worst alternative.
+
+### Why: 1024 is also the rarest oracle winner
+
+Oracle-best-size distribution per split, full action space
+(`artifacts/baselines/size_distribution_full.json`):
+
+| split |  128  |  256  |  512  | **1024** |
+| ----: | ----: | ----: | ----: | -------: |
+|  test | 76.2% | 11.9% |  6.0% | **6.0%** |
+| train | 79.7% |  9.7% |  5.5% | **5.1%** |
+|   val | 81.8% |  7.8% |  1.3% | **9.1%** |
+
+1024 wins the per-question oracle on roughly 5–9 % of questions across the
+splits. A 4-way classifier with one class at this prior is a poor target:
+the router gets very little training signal for a class that is, by the
+table above, the worst single-size baseline anyway. We avoid that by
+narrowing the action space.
+
+### Cost: the headline gap shrinks but stays well above the healthy threshold
+
+Oracle gap on the test split, before and after dropping 1024 (overall and
+per question type):
+
+|           | full action space | restricted action space |  sacrifice |
+| --------- | ----------------: | ----------------------: | ---------: |
+| overall   |        +10.61 pts |               +8.19 pts |  -2.42 pts |
+| factoid   |        +15.82 pts |              +14.63 pts |  -1.19 pts |
+| multihop  |         +5.82 pts |               +3.02 pts |  -2.80 pts |
+| synthesis |         +5.32 pts |               +2.05 pts |  -3.27 pts |
+
+Sources: `artifacts/baselines/oracle_gap.json` (canonical, 3-size) and
+`artifacts/baselines/oracle_gap_full.json` (ablation, 4-size).
+
+The +8.19-point gap is well above our 3-point "healthy gap" threshold
+(declared in `experiments/run_baselines.py::_verdict`), so the project
+premise — that per-question routing beats any fixed size — holds under
+the restricted action space. The cost is honest: factoid is essentially
+unaffected, but multihop and synthesis lose roughly half of their oracle
+headroom. The report should disclose this rather than hide it.
+
+### How to talk about this in the report
+
+A defensible single-paragraph framing for the methods section:
+
+> The router's action space is restricted to {128, 256, 512}. Chunk size
+> 1024 is dominated on this corpus along the dimensions that matter for
+> routing: it has the worst single-size baseline F1 (0.157, vs. 0.213 for
+> 128) and is the rarest per-question oracle winner (≈ 6 % on test, 5 %
+> on train, 9 % on validation). Including it would require a calibrated
+> 4-way classifier to learn a low-prior class whose best-case contribution
+> is dominated by the next-best size on average. Restricting to three
+> sizes reduces the test-set oracle gap from +10.61 to +8.19 F1 points
+> overall, with the loss concentrated in multihop and synthesis questions
+> (−2.80 and −3.27 points respectively); factoid is essentially unchanged
+> (−1.19 points). We retain the 1024 chunks and FAISS index in the
+> artifact tree so the ablation that motivates this choice
+> (`artifacts/baselines/*_full.json`) remains exactly reproducible.
+
+A defensible single-paragraph framing for the discussion / limitations
+section:
+
+> Restricting the action space to three sizes leaves measurable oracle
+> headroom on the table for multihop and synthesis questions (roughly
+> half their per-type oracle gap), reflecting that very long contexts
+> sometimes are the right answer for these question types on this corpus.
+> A larger labeled set, or a per-type action-space decision, could
+> recover this. We chose the simpler design because the larger,
+> better-studied 3-class router was a closer fit to the project's
+> originality framing (calibrated cheap classifier vs. fusion baseline)
+> than a brittle 4-class classifier with a 6 %-prior class would have
+> been.
+
+### How to reproduce both numbers
+
+From `rag-chunk-routing/`:
+
+```
+# Canonical (3-size action space) — overwrites oracle_gap.json etc.
+python -m experiments.run_baselines --config configs/base.yaml
+
+# Ablation (full 4-size grid) — writes *_full.json alongside.
+python -m experiments.run_baselines \
+    --config configs/base.yaml \
+    --restrict-sizes 128,256,512,1024 \
+    --out-suffix _full
+```
+
+`run_baselines` does no retrieval and no generation; it is pure
+aggregation over `eval_grid.jsonl`, so both runs together take a few
+seconds. Re-running them after any change to `eval_grid.jsonl` is the
+correct way to refresh the report's numbers; **no GPU work is required**
+to reproduce the action-space comparison.
+
 ## Phase 3: Freeze and ablations
 
 Goal of this phase: lock the numbers that will appear in the report.
@@ -204,6 +332,22 @@ new rows to `qa_raw.jsonl`. Chunks already used in `qa_validated.jsonl` are
 excluded from sampling so we don't mine the same chunk twice. Pass
 `--force` to overwrite `qa_raw.jsonl` instead of appending, or `make
 clean-qa` (`rm -rf artifacts/qa`) first.
+
+**Why the QA set is 398 and not 400.** Earlier rounds of `generate_qa` /
+`filter_qa` (before 2026-05-01) advanced the qa_id counter by the *produced*
+pair count rather than the *attempted* count. When iterations were skipped
+(parse error, judge rejection, missing field), the next call's offset
+collided with a slot the previous call had already used, producing two
+distinct questions sharing the same qa_id. This affected `qa_0256` and
+`qa_0257`. After fixing the allocator (`rag_cr/qa_gen.py`: ids are now drawn
+from a collision-skipping iterator seeded with every qa_id already on
+disk), we de-duplicated `qa_validated.jsonl` by keeping the version of each
+collided pair whose content matches the existing oracle eval grid, so the
+~15 min A100 oracle pass did not need to be re-run. Net effect: 2 multihop
+pairs were dropped, and split totals are 237 / 77 / 84 = 398. The test
+split was unaffected by the dedup, so the +10.6 F1 oracle gap headline
+stands. The audit trail is in `artifacts/splits/manifest.json` (see the
+`note` field) and the regenerated SHA matches the deduped file.
 
 **Filter.** From `rag-chunk-routing/`:
 

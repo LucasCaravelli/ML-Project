@@ -47,11 +47,16 @@ artifacts/oracle/*
 !artifacts/oracle/eval_grid.jsonl
 !artifacts/oracle/labels.jsonl
 # Baseline + oracle-gap reports — small JSON, useful for write-up.
+# *_full.json variants are the ablation with the retired chunk size 1024
+# included (run via `--restrict-sizes 128,256,512,1024 --out-suffix _full`).
 !artifacts/baselines/
 artifacts/baselines/*
 !artifacts/baselines/oracle_gap.json
+!artifacts/baselines/oracle_gap_full.json
 !artifacts/baselines/size_distribution.json
+!artifacts/baselines/size_distribution_full.json
 !artifacts/baselines/test_summary.json
+!artifacts/baselines/test_summary_full.json
 
 # Results — all per-run outputs ignored
 results/runs/

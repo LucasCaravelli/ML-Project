@@ -15,7 +15,10 @@ paths:
   results_dir: results
 
 chunking:
-  sizes: [128, 256, 512, 1024]
+  # See base.yaml for why 1024 is excluded. Overlap entry kept so the
+  # existing 1024-size FAISS index and chunk file remain readable for
+  # the ablation that motivates the choice.
+  sizes: [128, 256, 512]
   overlaps:
     128: 16
     256: 32
