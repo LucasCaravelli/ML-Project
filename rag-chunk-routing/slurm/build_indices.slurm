@@ -14,4 +14,5 @@ module load miniconda3
 source activate ragcr
 export HF_HOME="$HOME/.cache/huggingface"
 
-python -m experiments.build_indices --config configs/cluster.yaml
+# Use base.yaml (CPU embeddings) since this job doesn't request a GPU.
+python -m experiments.build_indices --config configs/base.yaml
