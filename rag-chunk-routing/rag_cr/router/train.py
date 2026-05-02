@@ -114,7 +114,7 @@ def run_cv_grid(
     return pd.DataFrame(records)
 
 
-def select_best_on_val(
+def rank_all_on_val(
     train_questions: list[str],
     train_types: list[str],
     train_labels: list[int],
@@ -123,15 +123,11 @@ def select_best_on_val(
     val_labels: list[int],
     config: Any,
     seed: int,
-) -> tuple[FeatureExtractor, RouterModel, dict[str, Any]]:
-    """Refit each grid cell on full train, score on val, return best extractor + classifier + metadata."""
+) -> list[tuple[FeatureExtractor, RouterModel, dict[str, Any]]]:
+    """Refit every grid cell on full train, score on val; return list sorted by val macro-F1 desc."""
     y_train = np.array(train_labels)
     y_val = np.array(val_labels)
-
-    best_f1 = -1.0
-    best_ext: FeatureExtractor | None = None
-    best_clf: RouterModel | None = None
-    best_meta: dict[str, Any] = {}
+    cells: list[tuple[float, FeatureExtractor, RouterModel, dict[str, Any]]] = []
 
     for fs in config.router.feature_sets:
         for clf_name in config.router.model_names:
@@ -144,17 +140,40 @@ def select_best_on_val(
             y_pred = clf.predict(X_val)
 
             scores = _score_predictions(y_val, y_pred)
-            if scores["macro_f1"] > best_f1:
-                best_f1 = scores["macro_f1"]
-                best_ext = ext
-                best_clf = clf
-                best_meta = {
-                    "feature_set": fs,
-                    "classifier_name": clf_name,
-                    "val_macro_f1": scores["macro_f1"],
-                    "val_balanced_accuracy": scores["balanced_accuracy"],
-                    "val_accuracy": scores["accuracy"],
-                }
+            cells.append(
+                (
+                    scores["macro_f1"],
+                    ext,
+                    clf,
+                    {
+                        "feature_set": fs,
+                        "classifier_name": clf_name,
+                        "val_macro_f1": scores["macro_f1"],
+                        "val_balanced_accuracy": scores["balanced_accuracy"],
+                        "val_accuracy": scores["accuracy"],
+                    },
+                )
+            )
 
-    assert best_ext is not None and best_clf is not None
-    return best_ext, best_clf, best_meta
+    cells.sort(key=lambda x: x[0], reverse=True)
+    return [(ext, clf, meta) for _, ext, clf, meta in cells]
+
+
+def select_best_on_val(
+    train_questions: list[str],
+    train_types: list[str],
+    train_labels: list[int],
+    val_questions: list[str],
+    val_types: list[str],
+    val_labels: list[int],
+    config: Any,
+    seed: int,
+) -> tuple[FeatureExtractor, RouterModel, dict[str, Any]]:
+    """Refit each grid cell on full train, score on val, return best by macro-F1."""
+    ranked = rank_all_on_val(
+        train_questions, train_types, train_labels,
+        val_questions, val_types, val_labels,
+        config, seed,
+    )
+    assert ranked, "No grid cells to evaluate"
+    return ranked[0]

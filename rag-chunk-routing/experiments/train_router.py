@@ -7,11 +7,14 @@ import subprocess
 from pathlib import Path
 
 from rag_cr import Config, load_config, set_seed
+from rag_cr.io import read_jsonl
 from rag_cr.router.train import (
     load_router_data,
+    rank_all_on_val,
     run_cv_grid,
-    select_best_on_val,
 )
+
+_N_FINALISTS = 3
 
 
 def _git_hash() -> str:
@@ -24,6 +27,40 @@ def _git_hash() -> str:
 
 def _oracle_labels_path(config: Config) -> Path:
     return config.paths.artifacts_dir / "oracle" / "labels.jsonl"
+
+
+def _val_rag_f1(
+    extractor,
+    classifier,
+    val_questions: list[str],
+    val_types: list[str],
+    val_rows: list[dict],
+    config: Config,
+) -> float | None:
+    """Run RAG on val with predicted chunk sizes; return mean F1, or None if pipeline unavailable."""
+    try:
+        from rag_cr.metrics import score as rag_score
+        from rag_cr.systems import FixedSizeSystem
+    except Exception:
+        return None
+
+    X_val = extractor.transform(val_questions, val_types)
+    predictions = classifier.predict(X_val)
+
+    systems: dict = {}
+    for size in set(int(p) for p in predictions):
+        systems[size] = FixedSizeSystem(size, config)
+
+    f1_scores: list[float] = []
+    for row, pred_size in zip(val_rows, predictions.tolist()):
+        try:
+            pred_text, passages = systems[int(pred_size)].answer(row["question"], qa_id=row["qa_id"])
+            s = rag_score(pred_text, row["answer"], passages)
+            f1_scores.append(float(s["f1"]))
+        except Exception:
+            f1_scores.append(0.0)
+
+    return sum(f1_scores) / len(f1_scores) if f1_scores else None
 
 
 def main(config: Config, config_path: str) -> None:
@@ -77,13 +114,48 @@ def main(config: Config, config_path: str) -> None:
     print(summary.to_string(index=False))
     print()
 
-    # --- Select best cell on val ---
-    print("Selecting best configuration on validation set …")
-    best_ext, best_clf, best_meta = select_best_on_val(
-        train_q, train_t, train_l,
-        val_q, val_t, val_l,
-        config, seed,
-    )
+    # --- Two-pass val selection: macro-F1 then RAG F1 ---
+    print("Ranking all grid cells on validation set …")
+    all_cells = rank_all_on_val(train_q, train_t, train_l, val_q, val_t, val_l, config, seed)
+    finalists = all_cells[:_N_FINALISTS]
+
+    print(f"  Top-{_N_FINALISTS} finalists by val macro-F1:")
+    for i, (_, _, meta) in enumerate(finalists):
+        print(f"    {i + 1}. {meta['feature_set']}+{meta['classifier_name']}  "
+              f"macro-F1={meta['val_macro_f1']:.4f}")
+    print()
+
+    # Load raw val rows aligned with val_q for RAG re-ranking
+    val_rows_raw = read_jsonl(splits_dir / "val.jsonl")
+    oracle_by_id_val: dict[str, int] = {r["qa_id"]: r["best_size"] for r in read_jsonl(oracle_path)}
+    val_rows_filtered = [
+        r for r in val_rows_raw if oracle_by_id_val.get(r["qa_id"]) in chunk_sizes
+    ]
+
+    print("  Re-ranking finalists by val RAG F1 …")
+    best_ext, best_clf, best_meta = finalists[0]
+    rag_results: list[tuple[float, int]] = []
+    for i, (ext, clf, meta) in enumerate(finalists):
+        rag_f1 = _val_rag_f1(ext, clf, val_q, val_t, val_rows_filtered, config)
+        if rag_f1 is not None:
+            rag_results.append((rag_f1, i))
+            print(f"    {i + 1}. {meta['feature_set']}+{meta['classifier_name']}  "
+                  f"val RAG F1={rag_f1:.4f}")
+        else:
+            print(f"    {i + 1}. {meta['feature_set']}+{meta['classifier_name']}  "
+                  f"val RAG F1=unavailable")
+
+    if rag_results:
+        best_rag_f1, best_idx = max(rag_results)
+        best_ext, best_clf, best_meta = finalists[best_idx]
+        best_meta = {**best_meta, "val_rag_f1": best_rag_f1, "selection_method": "val_rag_f1"}
+        print(f"\n  Selected by val RAG F1: "
+              f"{best_meta['feature_set']}+{best_meta['classifier_name']} "
+              f"(RAG F1={best_rag_f1:.4f})")
+    else:
+        best_meta = {**best_meta, "selection_method": "val_macro_f1"}
+        print("\n  RAG pipeline unavailable — selected by val macro-F1.")
+    print()
 
     pkl_path = out_dir / "best.pkl"
     with pkl_path.open("wb") as f:
@@ -99,7 +171,10 @@ def main(config: Config, config_path: str) -> None:
     print("Winner:")
     print(f"  feature_set          : {best_meta['feature_set']}")
     print(f"  classifier           : {best_meta['classifier_name']}")
+    print(f"  selection method     : {best_meta['selection_method']}")
     print(f"  val macro-F1         : {best_meta['val_macro_f1']:.4f}")
+    if "val_rag_f1" in best_meta:
+        print(f"  val RAG F1           : {best_meta['val_rag_f1']:.4f}")
     print(f"  val balanced acc     : {best_meta['val_balanced_accuracy']:.4f}")
     print(f"  val accuracy         : {best_meta['val_accuracy']:.4f}")
 
