@@ -40,6 +40,19 @@ def _next_qa_id_offset(*paths: Path) -> int:
     return max_idx + 1
 
 
+def _all_qa_ids(*paths: Path) -> set[str]:
+    """Collect every qa_id already on disk so generation can skip collisions."""
+    ids: set[str] = set()
+    for path in paths:
+        if not path.exists():
+            continue
+        for row in read_jsonl(path):
+            qa_id = row.get("qa_id")
+            if isinstance(qa_id, str) and qa_id.startswith("qa_"):
+                ids.add(qa_id)
+    return ids
+
+
 def _validated_chunk_ids(validated_path: Path) -> set[str]:
     if not validated_path.exists():
         return set()
@@ -82,6 +95,7 @@ def main(config: Config, limit: int | None, force: bool) -> None:
 
     exclude = _validated_chunk_ids(validated_path)
     qa_id_offset = _next_qa_id_offset(out_path, validated_path, rejected_path)
+    existing_qa_ids = _all_qa_ids(out_path, validated_path, rejected_path)
 
     quota = _targets_from_distribution(config.qa.target_count, config.qa.type_distribution)
     validated_counts = _count_by_type(validated_path)
@@ -127,8 +141,13 @@ def main(config: Config, limit: int | None, force: bool) -> None:
             qa_id_offset=qa_id_offset,
             exclude_chunk_ids=exclude,
             type_override=qtype,
+            existing_qa_ids=existing_qa_ids,
         )
-        qa_id_offset += len(generated)
+        for p in generated:
+            existing_qa_ids.add(p["qa_id"])
+            idx = int(p["qa_id"][3:])
+            if idx + 1 > qa_id_offset:
+                qa_id_offset = idx + 1
         new_pairs.extend(generated)
 
     if force:

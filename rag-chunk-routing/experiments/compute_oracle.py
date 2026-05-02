@@ -72,17 +72,17 @@ def main(config: Config, splits: list[str]) -> None:
 
     artifacts_dir = config.paths.artifacts_dir
     sizes = config.chunking.sizes
-    top_k = config.retrieval.top_k
+    k_by_size = {s: config.retrieval.k_for_size(s) for s in sizes}
 
     qa_rows = _load_splits(artifacts_dir, splits)
     log.info("Loaded %d QA rows across splits=%s", len(qa_rows), splits)
 
-    log.info("Building retriever and prompts (top_k=%d, sizes=%s)…", top_k, sizes)
+    log.info("Building retriever and prompts (k_by_size=%s, sizes=%s)…", k_by_size, sizes)
     retriever = Retriever(config)
     pending: list[tuple[dict[str, Any], int, list[str], str]] = []
     for qa in qa_rows:
         for size in sizes:
-            chunks = retriever.retrieve(qa["question"], size, top_k)
+            chunks = retriever.retrieve(qa["question"], size, k_by_size[size])
             passages = [c["text"] for c in chunks]
             prompt = build_prompt(qa["question"], passages, config)
             pending.append((qa, size, passages, prompt))
@@ -123,10 +123,32 @@ def main(config: Config, splits: list[str]) -> None:
     log.info("Eval grid: existing=%d new=%d total=%d → %s",
              len(existing), len(new_rows), len(merged), grid_path)
 
-    labels = label_from_grid(merged)
+    # Canonical labels.jsonl is the router's training target, so it must be
+    # restricted to the active action space (config.chunking.sizes). Rows for
+    # retired sizes (e.g. 1024) stay in eval_grid.jsonl for the ablation but
+    # must not leak into labels — otherwise best_size could name a size the
+    # router cannot select. Full-grid labels are written to labels_full.jsonl
+    # for the ablation.
+    active_sizes = set(config.chunking.sizes)
+    active_rows = [r for r in merged if int(r["chunk_size"]) in active_sizes]
+    labels = label_from_grid(active_rows)
     labels_path = _oracle_labels_path(artifacts_dir)
     write_jsonl(labels_path, [dict(label) for label in labels])
-    log.info("Oracle labels: %d → %s", len(labels), labels_path)
+    log.info(
+        "Oracle labels (action_space=%s): %d → %s",
+        sorted(active_sizes), len(labels), labels_path,
+    )
+
+    if len(active_rows) < len(merged):
+        labels_full = label_from_grid(merged)
+        labels_full_path = labels_path.with_name("labels_full.jsonl")
+        write_jsonl(labels_full_path, [dict(label) for label in labels_full])
+        log.info(
+            "Oracle labels (full grid, %d sizes): %d → %s",
+            len({int(r["chunk_size"]) for r in merged}),
+            len(labels_full),
+            labels_full_path,
+        )
 
 
 if __name__ == "__main__":

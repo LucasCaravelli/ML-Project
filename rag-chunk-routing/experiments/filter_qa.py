@@ -70,6 +70,19 @@ def _next_qa_id_offset(*paths: Path) -> int:
     return max_idx + 1
 
 
+def _all_qa_ids(*paths: Path) -> set[str]:
+    """Collect every qa_id already on disk so generation can skip collisions."""
+    ids: set[str] = set()
+    for path in paths:
+        if not path.exists():
+            continue
+        for row in read_jsonl(path):
+            qa_id = row.get("qa_id")
+            if isinstance(qa_id, str) and qa_id.startswith("qa_"):
+                ids.add(qa_id)
+    return ids
+
+
 def run_pipeline(config: Config, *, do_topup: bool) -> None:
     set_seed(config.project.seed)
     load_dotenv()
@@ -122,6 +135,7 @@ def run_pipeline(config: Config, *, do_topup: bool) -> None:
         new_pairs: list[QAPair] = []
         if do_topup and any(d > 0 for d in deficits.values()):
             qa_id_offset = _next_qa_id_offset(raw_path, validated_path, rejected_path)
+            existing_qa_ids = _all_qa_ids(raw_path, validated_path, rejected_path)
             validated_chunk_ids = {
                 p["source_chunk_id"]
                 for p in validated_pairs
@@ -140,8 +154,13 @@ def run_pipeline(config: Config, *, do_topup: bool) -> None:
                     qa_id_offset=qa_id_offset,
                     exclude_chunk_ids=validated_chunk_ids,
                     type_override=qtype,
+                    existing_qa_ids=existing_qa_ids,
                 )
-                qa_id_offset += len(generated)
+                for p in generated:
+                    existing_qa_ids.add(p["qa_id"])
+                    idx = int(p["qa_id"][3:])
+                    if idx + 1 > qa_id_offset:
+                        qa_id_offset = idx + 1
                 new_pairs.extend(generated)
             if new_pairs:
                 _append_jsonl(raw_path, cast(list[dict[str, Any]], new_pairs))

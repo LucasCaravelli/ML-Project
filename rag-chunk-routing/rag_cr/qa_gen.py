@@ -164,6 +164,7 @@ def generate_qa(
     qa_id_offset: int = 0,
     exclude_chunk_ids: set[str] | None = None,
     type_override: str | None = None,
+    existing_qa_ids: set[str] | None = None,
 ) -> list[QAPair]:
     """Generate a stratified first-pass batch of synthetic QA pairs from chunks.
 
@@ -178,9 +179,12 @@ def generate_qa(
     Pass ``seed`` for reproducible stratification and chunk selection.
     Pass ``qa_id_offset`` to start qa_id numbering from a given index — used
     when resuming generation so new ids don't collide with previously decided
-    ones. Pass ``exclude_chunk_ids`` to skip chunks already mined for QA.
-    Pass ``type_override`` to restrict generation to a single type (used by
-    the per-type top-up loop in filter_qa.py).
+    ones. Pass ``existing_qa_ids`` (a snapshot of all qa_ids on disk) to
+    guarantee no collision: ids are allocated sequentially from
+    ``qa_id_offset`` upward, skipping any already in the set. Pass
+    ``exclude_chunk_ids`` to skip chunks already mined for QA. Pass
+    ``type_override`` to restrict generation to a single type (used by the
+    per-type top-up loop in filter_qa.py).
     """
     gen_cfg = qa_cfg.generation
     if gen_cfg.provider != "openai":
@@ -231,6 +235,24 @@ def generate_qa(
 
     rng = random.Random(seed)
     work = _build_work_list(targets, available_indices, rng)
+
+    # Allocate qa_ids one-at-a-time, skipping any already in use. Earlier
+    # versions used ``qa_{qa_id_offset + i:04d}`` keyed on the work-list index,
+    # which collided across calls when iterations were skipped (parse errors,
+    # judge rejections): the next call's offset+0 reused a slot the previous
+    # call had already burned at offset+produced_count. ``used_ids`` is the
+    # source of truth — initialised from disk and grown as we assign.
+    used_ids: set[str] = set(existing_qa_ids or set())
+    next_idx = qa_id_offset
+
+    def _alloc_qa_id() -> str:
+        nonlocal next_idx
+        while True:
+            qid = f"qa_{next_idx:04d}"
+            next_idx += 1
+            if qid not in used_ids:
+                used_ids.add(qid)
+                return qid
 
     pairs: list[QAPair] = []
     skipped_q = skipped_a = parse_err = missing_field = 0
@@ -322,7 +344,7 @@ def generate_qa(
 
         pairs.append(
             QAPair(
-                qa_id=f"qa_{qa_id_offset + i:04d}",
+                qa_id=_alloc_qa_id(),
                 question=question,
                 answer=answer,
                 source_chunk_id=primary["chunk_id"],
