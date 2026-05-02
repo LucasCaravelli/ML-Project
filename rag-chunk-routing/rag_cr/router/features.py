@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from typing import Protocol
 
 import numpy as np
@@ -84,7 +85,9 @@ class MiniLMExtractor:
 
 def _question_word_onehot(question: str) -> list[float]:
     """8-dim one-hot over {who,what,when,where,why,how,which,other}."""
-    first = question.lower().split()[0] if question.strip() else ""
+    raw = question.lower().split()[0] if question.strip() else ""
+    m = re.match(r"[a-z]+", raw)
+    first = m.group() if m else ""
     vec = [float(first == w) for w in _QUESTION_WORDS]
     vec.append(float(first not in _QUESTION_WORDS))
     return vec

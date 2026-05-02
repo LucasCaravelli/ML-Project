@@ -31,17 +31,13 @@ def _oracle_labels_path(config: Config) -> Path:
     return config.paths.artifacts_dir / "oracle" / "labels.jsonl"
 
 
-def _load_best_results(results_dir: Path, system_name: str) -> float | None:
-    """Find the most recent metrics.json for a given system and return mean_f1, or None."""
-    runs = sorted((results_dir / "runs").glob(f"*_{system_name}"), reverse=True)
-    for run in runs:
-        metrics_path = run / "metrics.json"
-        if metrics_path.exists():
-            data = json.loads(metrics_path.read_text())
-            val = data.get("mean_f1")
-            if val is not None:
-                return float(val)
-    return None
+def _read_oracle_gap(artifacts_dir: Path) -> tuple[float | None, float | None]:
+    """Return (oracle_f1_mean, best_baseline_f1) from artifacts/baselines/oracle_gap.json."""
+    path = artifacts_dir / "baselines" / "oracle_gap.json"
+    if not path.exists():
+        return None, None
+    data = json.loads(path.read_text())
+    return data.get("oracle_f1_mean"), data.get("best_baseline_f1")
 
 
 def _gap_closure(router_f1: float, best_baseline_f1: float | None, oracle_f1: float | None) -> float | None:
@@ -52,16 +48,6 @@ def _gap_closure(router_f1: float, best_baseline_f1: float | None, oracle_f1: fl
     if abs(denom) < 1e-9:
         return None
     return (router_f1 - best_baseline_f1) / denom
-
-
-def _best_baseline_f1(results_dir: Path, config: Config) -> float | None:
-    """Return the best mean_f1 across all fixed-size baseline runs."""
-    best: float | None = None
-    for size in config.chunking.sizes:
-        f1 = _load_best_results(results_dir, f"fixed_{size}")
-        if f1 is not None and (best is None or f1 > best):
-            best = f1
-    return best
 
 
 def main(config: Config, config_path: str) -> None:
@@ -145,7 +131,11 @@ def main(config: Config, config_path: str) -> None:
     try:
         from rag_cr.metrics import score as rag_score
         from rag_cr.systems import FixedSizeSystem
+    except Exception as exc:
+        log.warning("RAG pipeline unavailable (%s) — writing classification results only.", exc)
+        pipeline_available = False
 
+    if pipeline_available:
         systems: dict[int, FixedSizeSystem] = {}
         for size in set(int(p) for p in predictions):
             systems[size] = FixedSizeSystem(size, config)
@@ -174,10 +164,7 @@ def main(config: Config, config_path: str) -> None:
                 }
             )
             rag_scores.append({"em": s["em"], "f1": s["f1"], "cost_tokens": s["cost_tokens"]})  # type: ignore[arg-type]
-
-    except Exception as exc:
-        log.warning("RAG pipeline unavailable (%s) — writing classification results only.", exc)
-        pipeline_available = False
+    else:
         for qa_id, pred_size in zip(filtered_ids, predictions.tolist()):
             row = id_to_question[qa_id]
             pred_rows.append(
@@ -200,13 +187,14 @@ def main(config: Config, config_path: str) -> None:
         mean_em = float(np.mean([s["em"] for s in rag_scores]))
         mean_cost = float(np.mean([s["cost_tokens"] for s in rag_scores]))
 
-    baseline_f1 = _best_baseline_f1(results_dir, config)
-    oracle_f1 = _load_best_results(results_dir, "oracle")
+    oracle_f1, baseline_f1 = _read_oracle_gap(artifacts_dir)
 
-    if baseline_f1 is None:
-        warnings.warn("No baseline results found in results/runs/. gap_closure_fraction set to null.", stacklevel=1)
-    if oracle_f1 is None:
-        warnings.warn("No oracle results found in results/runs/. gap_closure_fraction set to null.", stacklevel=1)
+    if baseline_f1 is None or oracle_f1 is None:
+        warnings.warn(
+            "artifacts/baselines/oracle_gap.json not found or incomplete — "
+            "gap_closure_fraction set to null.",
+            stacklevel=1,
+        )
 
     gap = _gap_closure(mean_f1 or 0.0, baseline_f1, oracle_f1) if mean_f1 is not None else None
 
