@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 from collections import defaultdict
 from pathlib import Path
 
@@ -31,6 +32,8 @@ from rag_cr.io import read_jsonl
 log = get_logger(__name__)
 
 TYPES_ORDER = ["factoid", "multihop", "synthesis"]
+
+_RUN_RE = re.compile(r"^\d{8}_\d{6}_(.+)$")
 
 PALETTE = {
     "Oracle\n(ceiling)": "#27ae60",
@@ -45,8 +48,11 @@ def _load_json(path: Path) -> dict:
 
 
 def _latest(results_dir: Path, tag: str, filename: str) -> Path | None:
-    runs = sorted(results_dir.glob(f"runs/*_{tag}/{filename}"))
-    return runs[-1] if runs else None
+    candidates = [
+        p for p in sorted(results_dir.glob(f"runs/*_{tag}/{filename}"))
+        if (m := _RUN_RE.match(p.parent.name)) and m.group(1) == tag
+    ]
+    return candidates[-1] if candidates else None
 
 
 def _figure_router_comparison(out_dir: Path, artifacts_dir: Path, results_dir: Path) -> None:
