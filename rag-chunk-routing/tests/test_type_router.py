@@ -7,7 +7,6 @@ from pathlib import Path
 import numpy as np
 import pytest
 
-
 # ---------------------------------------------------------------------------
 # Helpers shared across tests
 # ---------------------------------------------------------------------------
@@ -248,7 +247,6 @@ class TestTypeRouterMain:
         ]
         oracle_dir = artifacts_dir / "oracle"
         grid_path = oracle_dir / "eval_grid.jsonl"
-        existing = grid_path.read_text()
         with grid_path.open("a") as f:
             for row in extra:
                 f.write(json.dumps(row) + "\n")

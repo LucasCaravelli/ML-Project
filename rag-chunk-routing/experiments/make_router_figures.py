@@ -89,7 +89,7 @@ def _figure_router_comparison(out_dir: Path, artifacts_dir: Path, results_dir: P
     fig, ax = plt.subplots(figsize=(6.5, 4.0))
     bars = ax.bar(labels, values, color=colors, width=0.5, edgecolor="white", linewidth=0.8)
 
-    for bar, val in zip(bars, values):
+    for bar, val in zip(bars, values, strict=True):
         ax.text(
             bar.get_x() + bar.get_width() / 2,
             bar.get_height() + 0.004,
@@ -151,7 +151,10 @@ def _figure_router_per_type(out_dir: Path, artifacts_dir: Path, results_dir: Pat
 
     # Best fixed baseline per type
     baseline_vals = [per_type_oracle.get(t, {}).get("best_baseline_f1", 0.0) for t in TYPES_ORDER]
-    ax.bar(x - width, baseline_vals, width, label="Best fixed baseline", color="#3498db", alpha=0.85)
+    ax.bar(
+        x - width, baseline_vals, width,
+        label="Best fixed baseline", color="#3498db", alpha=0.85,
+    )
 
     # Type-aware policy
     if type_router_by_type:
@@ -164,7 +167,10 @@ def _figure_router_per_type(out_dir: Path, artifacts_dir: Path, results_dir: Pat
     # Trained router
     if router_by_type:
         router_vals = [router_by_type.get(t, 0.0) for t in TYPES_ORDER]
-        ax.bar(x + offset, router_vals, width, label="Trained router (MiniLM+LR)", color="#e74c3c", alpha=0.85)
+        ax.bar(
+            x + offset, router_vals, width,
+            label="Trained router (MiniLM+LR)", color="#e74c3c", alpha=0.85,
+        )
 
     ax.set_xticks(x)
     ax.set_xticklabels([t.capitalize() for t in TYPES_ORDER], fontsize=10)

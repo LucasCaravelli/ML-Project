@@ -35,6 +35,8 @@ fusion: oracle
 router: oracle
 	$(PY) experiments/train_router.py --config $(CONFIG)
 	$(PY) experiments/run_router.py --config $(CONFIG)
+	$(PY) experiments/run_type_router.py --config $(CONFIG)
+	$(PY) experiments/make_router_figures.py --config $(CONFIG)
 
 frontier: baselines fusion router
 	$(PY) experiments/make_frontier.py --config $(CONFIG)

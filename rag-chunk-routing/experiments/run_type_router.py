@@ -32,7 +32,9 @@ def _read_oracle_gap(artifacts_dir: Path) -> tuple[float | None, float | None]:
     return data.get("oracle_f1_mean"), data.get("best_baseline_f1")
 
 
-def _gap_closure(router_f1: float, baseline_f1: float | None, oracle_f1: float | None) -> float | None:
+def _gap_closure(
+    router_f1: float, baseline_f1: float | None, oracle_f1: float | None
+) -> float | None:
     if baseline_f1 is None or oracle_f1 is None:
         return None
     denom = oracle_f1 - baseline_f1
