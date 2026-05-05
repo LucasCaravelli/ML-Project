@@ -215,3 +215,70 @@ Two concrete things to watch for when you arrive:
    oracle ceiling (from `labels.jsonl`), not the full-grid one
    (`labels_full.jsonl`), so the router and fusion are scored against the
    same ceiling they were optimized against.
+
+---
+
+## 9. Router track outcomes (Quentin → Max)
+
+The router track is **complete and closed**. The blocking dependency from §8
+is now resolved.
+
+### Results (test split, n=84)
+
+| System | Mean F1 | Gap closure |
+|---|---|---|
+| Fixed baseline (size 128) | 0.213 | 0.00 |
+| Type-aware heuristic | 0.229 | +0.20 |
+| **Oracle ceiling** | **0.295** | 1.00 |
+| Trained router (MiniLM + LR) | 0.171 | −0.51 |
+
+**Conclusion:** the trained router is a negative result. The only useful
+routing signal is coarse question type; the type-aware heuristic (no
+training) outperforms both the trained router and the fixed baseline.
+
+### New scripts (all run from `rag-chunk-routing/`)
+
+| Script | Purpose | GPU needed |
+|---|---|---|
+| `experiments/train_router.py` | CV grid search + two-pass val selection; saves `artifacts/router/best.pkl` | Yes (MiniLM embed) |
+| `experiments/run_router.py` | Evaluates best router on test via full RAG pipeline | Yes (vLLM) |
+| `experiments/run_type_router.py` | Type-aware sanity baseline; reads eval grid, no inference | No |
+| `experiments/make_router_figures.py` | Generates `fig_router_comparison.*` and `fig_router_per_type.*` | No |
+
+Run everything in order with `make router` (depends on `oracle`).
+
+### `metrics.json` schema (your unblocking dependency)
+
+`results/runs/<ts>_router/metrics.json` has this shape — use it for the
+frontier plot:
+
+```json
+{
+  "mean_f1": 0.171,
+  "mean_em": 0.107,
+  "mean_cost_tokens": 569.1,
+  "macro_f1_router_classification": 0.292,
+  "balanced_accuracy_router_classification": 0.299,
+  "accuracy_router_classification": 0.595,
+  "gap_closure_fraction": -0.511,
+  "n_test_examples": 84,
+  "best_baseline_mean_f1_ref": 0.213,
+  "oracle_mean_f1_ref": 0.295
+}
+```
+
+The type-aware heuristic run (`<ts>_type_router/metrics.json`) has the same
+`mean_f1` and `gap_closure_fraction` fields and can be plotted alongside the
+trained router on the frontier.
+
+### Committed artifacts
+
+- `results/figures/table_router_results.tex` — LaTeX table (already `\input`'d in the report)
+- `results/figures/fig_router_comparison.{pdf,png}` — bar chart
+- `results/figures/fig_router_per_type.{pdf,png}` — per-type breakdown
+- `tests/test_type_router.py` — 28 tests for the new scripts
+
+### What you do not need to re-run
+
+The report section is written and figures are committed. You only need to
+re-run `make router` if you change the pipeline or want fresh predictions.

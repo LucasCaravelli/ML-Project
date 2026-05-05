@@ -69,6 +69,89 @@ and implementation details (model size, optimiser, hyperparameters).
 Present your main results using tables or figures.
 Compare against baselines where applicable.
 
+% Fixed-size baselines and oracle
+\input{rag-chunk-routing/results/figures/table_main_results}
+
+\subsection{Chunk-Size Router}
+
+We train a supervised router that maps each question to a predicted optimal
+chunk size in $\{128, 256, 512\}$.
+The router is trained on oracle labels (the chunk size that maximises F1 for
+each question on the validation split) using a cross-validated grid search
+over three feature extractors and three classifiers.
+
+\paragraph{Feature extractors.}
+\textit{TF-IDF}: bag-of-bigrams with up to 10\,000 features.
+\textit{MiniLM}: frozen sentence embeddings from
+\texttt{all-MiniLM-L6-v2} (384 dimensions).
+\textit{Handcrafted}: 13-dimensional deterministic features (query length,
+question-word one-hot, heuristic NER count, question-type one-hot).
+
+\paragraph{Classifiers.}
+Logistic regression, linear SVM, and LightGBM, all tuned via 5-fold
+stratified cross-validation on the training split ($n=237$).
+
+\paragraph{Two-pass model selection.}
+The top-3 grid cells by validation macro-F1 are re-ranked by their
+end-to-end validation RAG F1 (running the full pipeline with predicted
+chunk sizes), and the winner is selected by RAG F1.
+The selected model is \textit{MiniLM + logistic regression}
+(val macro-F1 = 0.416, val RAG F1 = 0.278).
+
+\paragraph{Test results.}
+Table~\ref{tab:router-results} and Figure~\ref{fig:router-comparison}
+report test-set performance.
+The router achieves a classification macro-F1 of 0.292 and a mean RAG F1
+of 0.171, below the best fixed-size baseline (0.213).
+The gap-closure fraction is $-0.51$, indicating that the router's
+mispredictions hurt more than its correct predictions help.
+
+\input{rag-chunk-routing/results/figures/table_router_results}
+
+\begin{figure}[h]
+  \centering
+  \includegraphics[width=0.72\linewidth]{rag-chunk-routing/results/figures/fig_router_comparison.pdf}
+  \caption{Mean F1 on the test split for each system. The dashed line
+    marks the best fixed-size baseline (size~128, F1~=~0.213). The
+    type-aware heuristic routes each question to its type's
+    best-on-average chunk size with no training; the trained router
+    (MiniLM~+~LR) underperforms despite end-to-end selection.}
+  \label{fig:router-comparison}
+\end{figure}
+
+\paragraph{Type-aware sanity baseline.}
+As a parameter-free sanity check, we route each test question to the
+chunk size with the highest mean F1 for its question type, as determined
+from the eval grid (no new inference required).
+This type-aware policy achieves a mean F1 of 0.229 and a gap-closure
+fraction of 0.20.
+Figure~\ref{fig:router-per-type} shows the per-type breakdown.
+
+\begin{figure}[h]
+  \centering
+  \includegraphics[width=0.82\linewidth]{rag-chunk-routing/results/figures/fig_router_per_type.pdf}
+  \caption{Per-type mean F1 on the test split. Factoid questions dominate
+    the dataset (82\% oracle-best at size~128); the trained router fails
+    on the minority types (multihop, synthesis) where the routing signal
+    matters most.}
+  \label{fig:router-per-type}
+\end{figure}
+
+\paragraph{Analysis.}
+Three factors explain the trained router's negative result.
+First, the training set is small (237 examples), limiting generalisation;
+classification macro-F1 drops from 0.416 on validation to 0.292 on test.
+Second, the oracle--baseline gap is only 8.2~F1~points
+(Table~\ref{tab:main-results}), so even modest routing errors erase the
+potential gain.
+Third, the type-aware heuristic demonstrates that question type is the
+most informative routing signal: routing by type alone outperforms the
+trained model, confirming that the learned features do not capture
+information beyond what question type already encodes.
+
+% Per-type gap table
+\input{rag-chunk-routing/results/figures/table_per_type_gap}
+
 \subsection{Ablations}
 
 If applicable, include ablation studies that isolate the contribution

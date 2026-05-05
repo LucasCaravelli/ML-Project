@@ -1,0 +1,17 @@
+% Router evaluation results on the test split.
+\begin{table}[t]
+\centering
+\caption{Router evaluation on the test split ($n=84$, action space $\{128, 256, 512\}$). The router is selected by a two-pass procedure: top-3 grid cells by val macro-F1 are re-ranked by val RAG F1. Gap closure = $(\text{router F1} - \text{best baseline F1})\;/\;(\text{oracle F1} - \text{best baseline F1})$.}
+\label{tab:router-results}
+\begin{tabular}{lrrrr}
+\toprule
+System & F1 & EM & Clf macro-F1 & Gap closure \\
+\midrule
+Fixed (size = 128) & 0.2128 & 0.1429 & -- & 0.00 \\
+\textbf{Oracle} & \textbf{0.2947} & -- & -- & 1.00 \\
+\midrule
+Type-aware heuristic & 0.2291 & -- & -- & $+0.20$ \\
+Router (minilm + logreg) & 0.1710 & 0.1071 & 0.2917 & $-0.51$ \\
+\bottomrule
+\end{tabular}
+\end{table}
