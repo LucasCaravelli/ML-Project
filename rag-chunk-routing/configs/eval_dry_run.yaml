@@ -25,6 +25,10 @@ retrieval:
   top_k: 5
   fusion_constant: 60
 
+splits:
+  ratios: {train: 0.6, val: 0.2, test: 0.2}
+  stratify_by: type
+
 # extractive backend requires no external server — good for CI and offline testing.
 generation:
   backend: extractive
