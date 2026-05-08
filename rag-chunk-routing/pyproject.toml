@@ -2,7 +2,6 @@
 name = "rag-chunk-routing"
 version = "1.0.0"
 description = "Per-query chunk-size routing for retrieval-augmented generation."
-readme = "README.md"
 license = { file = "LICENSE" }
 requires-python = ">=3.11"
 dependencies = [
