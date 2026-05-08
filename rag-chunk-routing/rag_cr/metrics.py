@@ -1,3 +1,5 @@
+"""Evaluation metrics: exact match, token-overlap F1, and faithfulness over retrieved passages."""
+
 from __future__ import annotations
 
 import re
@@ -23,6 +25,7 @@ def _exact_match(prediction: str, gold: str) -> float:
 
 
 def token_f1(prediction: str, gold: str) -> float:
+    """Token-overlap F1 between prediction and gold answer (after normalization)."""
     pred_counts = Counter(_tokenize(prediction))
     gold_counts = Counter(_tokenize(gold))
 

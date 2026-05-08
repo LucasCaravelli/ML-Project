@@ -1,3 +1,5 @@
+"""FAISS index construction, persistence, and search per chunk size."""
+
 from __future__ import annotations
 
 from pathlib import Path

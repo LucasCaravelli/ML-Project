@@ -1,3 +1,13 @@
+"""Compute fixed-size baseline metrics from the eval grid.
+
+Aggregates per-(chunk_size, type) means from artifacts/oracle/eval_grid.jsonl,
+ranks the fixed-size systems, and computes the oracle gap (best fixed baseline
+vs. oracle upper bound). Writes per-size, per-type, and gap-summary JSON
+artifacts under artifacts/baselines/. No new model inference — pure aggregation.
+
+Run from rag-chunk-routing/:
+    python experiments/run_baselines.py --config configs/base.yaml
+"""
 from __future__ import annotations
 
 import argparse
@@ -98,7 +108,10 @@ def _size_distribution(rows_for_split: list[dict]) -> dict[int, dict[str, float]
 
 def _verdict(gap: float, max_share: float) -> str:
     if gap >= 3.0 and max_share < 0.40:
-        return "HEALTHY -- oracle gap is real and size distribution is non-trivial. Proceed to Stage B."
+        return (
+            "HEALTHY -- oracle gap is real and size distribution is non-trivial. "
+            "Proceed to Stage B."
+        )
     if gap < 1.0 or max_share > 0.60:
         return ("PIVOT -- gap too small or one chunk size dominates. "
                 "The premise is weaker than assumed; do not run Stage B. "
@@ -125,6 +138,7 @@ def main(
     restrict_sizes: list[int] | None = None,
     out_suffix: str = "",
 ) -> None:
+    """Aggregate eval-grid metrics into per-size, per-type, and oracle-gap baselines."""
     log = get_logger(__name__)
     artifacts_dir = config.paths.artifacts_dir
 
@@ -201,7 +215,10 @@ def main(
     print("\n[Per-size baselines on test]")
     if per_size:
         for size, m in per_size.items():
-            print(f"  size={size:>4}  n={m['n']:>3}  F1={m['f1']:.4f}  EM={m['em']:.4f}  faith={m['faithfulness']:.4f}")
+            print(
+                f"  size={size:>4}  n={m['n']:>3}  F1={m['f1']:.4f}  "
+                f"EM={m['em']:.4f}  faith={m['faithfulness']:.4f}"
+            )
     else:
         print("  (no test rows)")
 
@@ -215,16 +232,26 @@ def main(
         best_size = oracle_gap_payload["best_baseline_size"]
         print("\n[Oracle gap on test]")
         print(f"  oracle F1 (mean per-qa max):     {oracle_gap_payload['oracle_f1_mean']:.4f}")
-        print(f"  best fixed-size baseline F1:     {oracle_gap_payload['best_baseline_f1']:.4f}  (size={best_size})")
+        print(
+            f"  best fixed-size baseline F1:     "
+            f"{oracle_gap_payload['best_baseline_f1']:.4f}  (size={best_size})"
+        )
         print(f"  GAP:                             {gap_pts:+.2f} F1 points")
 
         print("\n[Per-type oracle gap on test]")
         for qtype, m in oracle_gap_payload["per_type"].items():
-            print(f"  {qtype:>10}  n={m['n_questions']:>3}  oracle={m['oracle_f1']:.4f}  best={m['best_baseline_f1']:.4f}  gap={m['gap']*100:+.2f} pts")
+            print(
+                f"  {qtype:>10}  n={m['n_questions']:>3}  "
+                f"oracle={m['oracle_f1']:.4f}  best={m['best_baseline_f1']:.4f}  "
+                f"gap={m['gap']*100:+.2f} pts"
+            )
 
         # Verdict using the test-split distribution if available, else first split.
         max_share = max(
-            (d["share"] for d in size_dist.get("test", next(iter(size_dist.values()), {})).values()),
+            (
+                d["share"]
+                for d in size_dist.get("test", next(iter(size_dist.values()), {})).values()
+            ),
             default=1.0,
         )
         verdict = _verdict(gap_pts, max_share)

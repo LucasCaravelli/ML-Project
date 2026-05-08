@@ -1,10 +1,19 @@
+"""Evaluate the trained chunk-size router on the test split.
+
+Loads the persisted best router from artifacts/router/, predicts per-question
+chunk sizes on the test split, then looks up F1 from the eval grid (no new
+inference). Reports macro-F1, balanced accuracy, confusion matrix, and the
+gap-closure fraction relative to the oracle upper bound.
+
+Run from rag-chunk-routing/:
+    python experiments/run_router.py --config configs/base.yaml
+"""
 from __future__ import annotations
 
 import argparse
 import json
 import logging
 import pickle
-import subprocess
 import warnings
 from pathlib import Path
 from typing import Any
@@ -15,39 +24,13 @@ from sklearn.metrics import balanced_accuracy_score, f1_score
 from rag_cr import Config, load_config, set_seed
 from rag_cr.io import create_run_dir, read_jsonl, write_json, write_jsonl
 from rag_cr.router.train import load_router_data
+from rag_cr.utils import gap_closure, git_hash, read_oracle_gap
 
 log = logging.getLogger(__name__)
 
 
-def _git_hash() -> str:
-    """Return the current git commit hash, or 'unknown' on failure."""
-    try:
-        return subprocess.check_output(["git", "rev-parse", "HEAD"], text=True).strip()
-    except Exception:
-        return "unknown"
-
-
 def _oracle_labels_path(config: Config) -> Path:
     return config.paths.artifacts_dir / "oracle" / "labels.jsonl"
-
-
-def _read_oracle_gap(artifacts_dir: Path) -> tuple[float | None, float | None]:
-    """Return (oracle_f1_mean, best_baseline_f1) from artifacts/baselines/oracle_gap.json."""
-    path = artifacts_dir / "baselines" / "oracle_gap.json"
-    if not path.exists():
-        return None, None
-    data = json.loads(path.read_text())
-    return data.get("oracle_f1_mean"), data.get("best_baseline_f1")
-
-
-def _gap_closure(router_f1: float, best_baseline_f1: float | None, oracle_f1: float | None) -> float | None:
-    """Compute (router - baseline) / (oracle - baseline), or None if reference data missing."""
-    if best_baseline_f1 is None or oracle_f1 is None:
-        return None
-    denom = oracle_f1 - best_baseline_f1
-    if abs(denom) < 1e-9:
-        return None
-    return (router_f1 - best_baseline_f1) / denom
 
 
 def main(config: Config, config_path: str) -> None:
@@ -56,7 +39,7 @@ def main(config: Config, config_path: str) -> None:
     set_seed(config.project.seed)
     seed = config.project.seed
 
-    print(f"git commit : {_git_hash()}")
+    print(f"git commit : {git_hash()}")
     print(f"config     : {config_path}")
     print()
 
@@ -140,7 +123,7 @@ def main(config: Config, config_path: str) -> None:
         for size in set(int(p) for p in predictions):
             systems[size] = FixedSizeSystem(size, config)
 
-        for qa_id, pred_size in zip(filtered_ids, predictions.tolist()):
+        for qa_id, pred_size in zip(filtered_ids, predictions.tolist(), strict=False):
             row = id_to_question[qa_id]
             system = systems[int(pred_size)]
             try:
@@ -165,7 +148,7 @@ def main(config: Config, config_path: str) -> None:
             )
             rag_scores.append({"em": s["em"], "f1": s["f1"], "cost_tokens": s["cost_tokens"]})  # type: ignore[arg-type]
     else:
-        for qa_id, pred_size in zip(filtered_ids, predictions.tolist()):
+        for qa_id, pred_size in zip(filtered_ids, predictions.tolist(), strict=False):
             row = id_to_question[qa_id]
             pred_rows.append(
                 {
@@ -187,7 +170,7 @@ def main(config: Config, config_path: str) -> None:
         mean_em = float(np.mean([s["em"] for s in rag_scores]))
         mean_cost = float(np.mean([s["cost_tokens"] for s in rag_scores]))
 
-    oracle_f1, baseline_f1 = _read_oracle_gap(artifacts_dir)
+    oracle_f1, baseline_f1 = read_oracle_gap(artifacts_dir)
 
     if baseline_f1 is None or oracle_f1 is None:
         warnings.warn(
@@ -196,7 +179,7 @@ def main(config: Config, config_path: str) -> None:
             stacklevel=1,
         )
 
-    gap = _gap_closure(mean_f1 or 0.0, baseline_f1, oracle_f1) if mean_f1 is not None else None
+    gap = gap_closure(mean_f1 or 0.0, baseline_f1, oracle_f1) if mean_f1 is not None else None
 
     metrics: dict[str, Any] = {
         "mean_f1": mean_f1,
@@ -219,7 +202,7 @@ def main(config: Config, config_path: str) -> None:
     write_json(
         run_dir / "meta.json",
         {
-            "git_commit": _git_hash(),
+            "git_commit": git_hash(),
             "config_path": config_path,
             "seed": seed,
             "best_config": best_config_meta,

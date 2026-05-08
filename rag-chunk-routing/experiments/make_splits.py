@@ -1,3 +1,13 @@
+"""Stratify the validated QA set into deterministic train / val / test splits.
+
+Reads the validated QA JSONL, draws a stratified split using config.splits.ratios
+(seeded), and writes one JSONL per split plus a manifest with seed, hashes, and
+counts. Refuses to overwrite existing splits without --force; preserves any
+prior manifest note unless --note is given.
+
+Run from rag-chunk-routing/:
+    python experiments/make_splits.py --config configs/base.yaml [--force] [--note "..."]
+"""
 from __future__ import annotations
 
 import argparse
@@ -40,6 +50,7 @@ def _sha256_file(path: Path) -> str:
 
 
 def main(config: Config, force: bool, note: str | None) -> None:
+    """Generate stratified train / val / test splits and persist a manifest."""
     set_seed(config.project.seed)
     log = get_logger(__name__)
 

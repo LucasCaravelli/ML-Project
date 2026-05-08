@@ -1,3 +1,14 @@
+"""Score every (question, chunk_size) cell of the eval grid and emit oracle labels.
+
+For each requested split, retrieves at every chunk size, generates an answer
+through the configured backend, scores against gold (EM / F1 / faithfulness),
+and append-merges new rows into artifacts/oracle/eval_grid.jsonl. Then derives
+labels.jsonl (restricted to the active action space) plus labels_full.jsonl
+whenever retired sizes are present.
+
+Run from rag-chunk-routing/:
+    python experiments/compute_oracle.py --config configs/base.yaml [--splits test|train|val|all]
+"""
 from __future__ import annotations
 
 import argparse
@@ -67,6 +78,7 @@ def _merge_grid_rows(
 
 
 def main(config: Config, splits: list[str]) -> None:
+    """Score the eval grid for the requested splits and emit oracle labels."""
     set_seed(config.project.seed)
     log = get_logger(__name__)
 
@@ -88,15 +100,23 @@ def main(config: Config, splits: list[str]) -> None:
             pending.append((qa, size, passages, prompt))
     log.info("Built %d prompts (qa=%d × sizes=%d)", len(pending), len(qa_rows), len(sizes))
 
-    log.info("Generating with backend=%s model=%s", config.generation.backend, config.generation.model_name)
+    log.info(
+        "Generating with backend=%s model=%s",
+        config.generation.backend,
+        config.generation.model_name,
+    )
     predictions = generate_batch([p[3] for p in pending], config)
     if len(predictions) != len(pending):
-        log.error("generate_batch returned %d predictions for %d prompts", len(predictions), len(pending))
+        log.error(
+            "generate_batch returned %d predictions for %d prompts",
+            len(predictions),
+            len(pending),
+        )
         sys.exit(2)
 
     log.info("Scoring %d predictions", len(predictions))
     new_rows: list[dict[str, Any]] = []
-    for (qa, size, passages, _), pred in zip(pending, predictions):
+    for (qa, size, passages, _), pred in zip(pending, predictions, strict=False):
         s = score(pred, qa["answer"], passages)
         new_rows.append(
             {

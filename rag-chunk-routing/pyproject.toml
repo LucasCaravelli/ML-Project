@@ -1,29 +1,34 @@
 [project]
 name = "rag-chunk-routing"
-version = "0.0.1"
+version = "1.0.0"
 description = "Per-query chunk-size routing for retrieval-augmented generation."
+readme = "README.md"
+license = { file = "LICENSE" }
 requires-python = ">=3.11"
 dependencies = [
-    "numpy",
-    "pyyaml",
-    "faiss-cpu",
-    "transformers",
-    "sentence-transformers",
-    "scikit-learn",
-    "lightgbm",
-    "requests",
+    # Version ranges chosen for compatibility with the cluster `ragcr` env that
+    # produced the reported results (see requirements.lock for exact pins).
+    "numpy>=1.26,<3",
+    "pyyaml>=6.0",
+    "faiss-cpu>=1.7",
+    "transformers>=4.40,<5",
+    "sentence-transformers>=2.5,<6",
+    "scikit-learn>=1.3",
+    "lightgbm>=4.0",
+    "requests>=2.28",
     "openai>=1.40",
     "python-dotenv>=1.0",
 ]
 
 [project.optional-dependencies]
 dev = [
-    "pytest",
-    "ruff",
-    "black",
+    "pytest>=8.0",
+    "pytest-cov>=5.0",
+    "ruff>=0.5",
+    "black>=24.0",
 ]
 cluster = [
-    "vllm",
+    "vllm>=0.6,<1",
 ]
 
 [build-system]
@@ -40,6 +45,12 @@ target-version = "py311"
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP", "B"]
 
+[tool.ruff.lint.per-file-ignores]
+# Visualization / report-generation scripts contain wide format strings,
+# LaTeX captions, and a markdown table whose columns are intentionally aligned.
+"experiments/make_figures.py" = ["E501"]
+"experiments/make_frontier.py" = ["E501"]
+
 [tool.black]
 line-length = 100
 target-version = ["py311"]
@@ -49,4 +60,5 @@ testpaths = ["tests"]
 addopts = "-ra"
 markers = [
     "slow: marks tests that load large models (deselect with -m 'not slow')",
+    "integration: tests that require built artifacts on disk (deselect with -m 'not integration')",
 ]

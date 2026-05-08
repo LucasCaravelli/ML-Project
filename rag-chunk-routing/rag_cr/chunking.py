@@ -1,3 +1,5 @@
+"""Deterministic tokenizer-aware chunking of the corpus into fixed-size segments."""
+
 from __future__ import annotations
 
 from functools import lru_cache
@@ -30,6 +32,9 @@ def chunk_corpus(corpus_path: Path, size: int, overlap: int) -> list[Chunk]:
     )
     offsets: list[tuple[int, int]] = encoding["offset_mapping"]
     n_tokens = len(offsets)
+    # Stride is how far the window advances per chunk. With overlap > 0 each
+    # chunk shares ``overlap`` tokens with the previous one, which guards
+    # against entity/sentence boundaries falling exactly at a chunk seam.
     stride = size - overlap
 
     chunks: list[Chunk] = []
@@ -37,6 +42,10 @@ def chunk_corpus(corpus_path: Path, size: int, overlap: int) -> list[Chunk]:
     chunk_idx = 0
 
     while tok_start < n_tokens:
+        # Last chunk may end short of ``size`` tokens (the corpus tail). The
+        # ``size`` field below still records the *target* size — that's how
+        # retrieval/fusion code keys per-size indices, regardless of the
+        # actual length of the trailing chunk.
         tok_end = min(tok_start + size, n_tokens)
         start_char = offsets[tok_start][0]
         end_char = offsets[tok_end - 1][1]

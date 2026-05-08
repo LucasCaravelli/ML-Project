@@ -1,3 +1,12 @@
+"""Chunk the corpus and build per-size FAISS indices.
+
+For each size in config.chunking.sizes, deterministically chunks the corpus,
+embeds the chunks with the configured model, and writes both the chunks
+(JSONL) and the dense FAISS index to artifacts/.
+
+Run from rag-chunk-routing/:
+    python experiments/build_indices.py --config configs/base.yaml
+"""
 from __future__ import annotations
 
 import argparse
@@ -10,6 +19,7 @@ from rag_cr.io import get_chunks_path, get_index_path, write_jsonl
 
 
 def main(config: Config) -> None:
+    """Build per-size FAISS indices over the chunked corpus."""
     set_seed(config.project.seed)
     log = get_logger(__name__)
 

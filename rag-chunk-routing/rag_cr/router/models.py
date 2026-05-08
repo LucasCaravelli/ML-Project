@@ -1,3 +1,5 @@
+"""Classifier wrappers (Logistic, Linear-SVM, LightGBM) with calibrated-probability output."""
+
 from __future__ import annotations
 
 from pathlib import Path
@@ -14,7 +16,18 @@ _SVM_CALIB_CV = 3
 
 
 class RouterModel(Protocol):
-    """Uniform fit/predict/save/load contract for candidate classifiers."""
+    """Uniform fit/predict/save/load contract for candidate classifiers.
+
+    Implementations expose:
+
+    - ``fit(features, labels)``: train on a feature matrix + integer label vector.
+    - ``predict(features)``: return per-example argmax labels.
+    - ``predict_proba(features)``: return calibrated per-class probabilities.
+    - ``save(path)``: persist the trained classifier to disk (pickle).
+    - ``load(path)`` (classmethod): reconstruct a previously saved classifier.
+
+    The ``name`` attribute identifies the model in CV-grid result tables.
+    """
 
     name: str
 
@@ -27,7 +40,7 @@ class RouterModel(Protocol):
     def save(self, path: Path) -> None: ...
 
     @classmethod
-    def load(cls, path: Path) -> "RouterModel": ...
+    def load(cls, path: Path) -> RouterModel: ...
 
 
 class LogisticRouter:
@@ -35,7 +48,9 @@ class LogisticRouter:
 
     name = "logreg"
 
-    def __init__(self, C: float = _LOGREG_C, max_iter: int = _LOGREG_MAX_ITER, seed: int = 42) -> None:
+    def __init__(
+        self, C: float = _LOGREG_C, max_iter: int = _LOGREG_MAX_ITER, seed: int = 42,
+    ) -> None:
         from sklearn.linear_model import LogisticRegression
 
         self._clf = LogisticRegression(
@@ -71,7 +86,7 @@ class LogisticRouter:
             pickle.dump(self, f)
 
     @classmethod
-    def load(cls, path: Path) -> "LogisticRouter":
+    def load(cls, path: Path) -> LogisticRouter:
         """Load a pickled LogisticRouter from path."""
         import pickle
 
@@ -145,7 +160,7 @@ class SVMRouter:
             pickle.dump(self, f)
 
     @classmethod
-    def load(cls, path: Path) -> "SVMRouter":
+    def load(cls, path: Path) -> SVMRouter:
         """Load a pickled SVMRouter from path."""
         import pickle
 
@@ -208,7 +223,7 @@ class LightGBMRouter:
             pickle.dump(self, f)
 
     @classmethod
-    def load(cls, path: Path) -> "LightGBMRouter":
+    def load(cls, path: Path) -> LightGBMRouter:
         """Load a pickled LightGBMRouter from path."""
         import pickle
 

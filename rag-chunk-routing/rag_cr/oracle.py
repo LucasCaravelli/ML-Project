@@ -1,7 +1,10 @@
+"""Oracle-label derivation from the per-(question, chunk-size) eval grid."""
+
 from __future__ import annotations
 
 from collections import defaultdict
-from typing import Any, Iterable
+from collections.abc import Iterable
+from typing import Any
 
 from .types import OracleLabel
 
@@ -20,6 +23,10 @@ def label_from_grid(grid_rows: Iterable[dict[str, Any]]) -> list[OracleLabel]:
     labels: list[OracleLabel] = []
     for qa_id in sorted(by_qa):
         rows = by_qa[qa_id]
+        # Encode the tie-break as a single sort key so `min` returns the winner.
+        # Negate f1 and em so HIGHER values become smaller tuple elements (min
+        # picks the smallest); leave chunk_size positive so SMALLER sizes win
+        # the final tiebreak. This implements: max F1, then max EM, then min size.
         winner = min(
             rows,
             key=lambda r: (-float(r["f1"]), -float(r["em"]), int(r["chunk_size"])),

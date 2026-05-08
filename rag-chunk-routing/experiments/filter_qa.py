@@ -1,3 +1,13 @@
+"""Filter raw QA into validated / rejected sets via primary-only F1 and a judge LLM.
+
+Two-stage: (1) a primary-only F1 threshold rejects QA pairs the answer
+generator cannot handle even when given the source chunk; (2) an LLM-judge
+pass validates the survivors. Optionally re-invokes generation to top up
+type quotas when the validated set is below target.
+
+Run from rag-chunk-routing/:
+    python experiments/filter_qa.py --config configs/base.yaml [--no-topup]
+"""
 from __future__ import annotations
 
 import argparse
@@ -84,6 +94,7 @@ def _all_qa_ids(*paths: Path) -> set[str]:
 
 
 def run_pipeline(config: Config, *, do_topup: bool) -> None:
+    """Run the two-stage filter (primary-only F1 + judge LLM) with optional top-up."""
     set_seed(config.project.seed)
     load_dotenv()
 

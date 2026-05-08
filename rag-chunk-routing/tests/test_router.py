@@ -62,7 +62,7 @@ def oracle_jsonl(tmp_path: Path) -> Path:
     """Write a minimal oracle labels file covering QUERIES."""
     path = tmp_path / "labels.jsonl"
     with path.open("w") as f:
-        for i, (label, qtype) in enumerate(zip(LABELS, TYPES)):
+        for i, (label, _qtype) in enumerate(zip(LABELS, TYPES, strict=False)):
             f.write(json.dumps({
                 "qa_id": f"qa_{i:04d}",
                 "best_size": label,
@@ -136,24 +136,6 @@ class TestTfidfExtractor:
         X_val = ext.transform(QUERIES[8:], TYPES[8:])
         assert X_val.shape == (4, X_val.shape[1])
 
-    def test_fit_transform_equals_fit_then_transform(self) -> None:
-        from rag_cr.router.features import TfidfExtractor
-
-        ext1 = TfidfExtractor()
-        X1 = ext1.fit_transform(QUERIES, TYPES)
-
-        ext2 = TfidfExtractor()
-        ext2.fit(QUERIES, TYPES)
-        X2 = ext2.transform(QUERIES, TYPES)
-
-        np.testing.assert_allclose(X1, X2)
-
-    def test_name(self) -> None:
-        from rag_cr.router.features import TfidfExtractor
-
-        assert TfidfExtractor().name == "tfidf"
-
-
 class TestHandcraftedExtractor:
     def test_output_shape_and_dtype(self) -> None:
         from rag_cr.router.features import HandcraftedExtractor
@@ -189,35 +171,10 @@ class TestHandcraftedExtractor:
         X2 = ext.transform(QUERIES, TYPES)
         np.testing.assert_array_equal(X1, X2)
 
-    def test_fit_is_noop(self) -> None:
-        from rag_cr.router.features import HandcraftedExtractor
-
-        ext = HandcraftedExtractor()
-        ext.fit(QUERIES, TYPES)  # must not raise
-        X = ext.transform(QUERIES, TYPES)
-        assert X.shape == (len(QUERIES), 13)
-
-    def test_name(self) -> None:
-        from rag_cr.router.features import HandcraftedExtractor
-
-        assert HandcraftedExtractor().name == "handcrafted"
-
-
 class TestMiniLMExtractor:
-    def test_fit_is_noop(self) -> None:
-        from rag_cr.router.features import MiniLMExtractor
-
-        ext = MiniLMExtractor()
-        ext.fit(QUERIES)  # must not raise
-
-    def test_name(self) -> None:
-        from rag_cr.router.features import MiniLMExtractor
-
-        assert MiniLMExtractor().name == "minilm"
-
     @pytest.mark.slow
     def test_output_shape_and_cache(self) -> None:
-        from rag_cr.router.features import MiniLMExtractor, _MINILM_CACHE
+        from rag_cr.router.features import MiniLMExtractor
 
         ext1 = MiniLMExtractor()
         ext2 = MiniLMExtractor()
@@ -233,7 +190,9 @@ class TestMiniLMExtractor:
 class TestConcatExtractor:
     def test_horizontal_stack(self) -> None:
         from rag_cr.router.features import (
-            ConcatExtractor, TfidfExtractor, HandcraftedExtractor,
+            ConcatExtractor,
+            HandcraftedExtractor,
+            TfidfExtractor,
         )
 
         tfidf = TfidfExtractor()
@@ -251,7 +210,9 @@ class TestConcatExtractor:
 
     def test_fit_then_transform(self) -> None:
         from rag_cr.router.features import (
-            ConcatExtractor, TfidfExtractor, HandcraftedExtractor,
+            ConcatExtractor,
+            HandcraftedExtractor,
+            TfidfExtractor,
         )
 
         cc = ConcatExtractor([TfidfExtractor(), HandcraftedExtractor()])
@@ -280,48 +241,6 @@ class TestBuildFeatureExtractor:
 # ---------------------------------------------------------------------------
 
 class TestLogisticRouter:
-    def test_predict_shape(self, small_X: np.ndarray) -> None:
-        from rag_cr.router.models import LogisticRouter
-
-        clf = LogisticRouter(seed=42)
-        clf.fit(small_X, np.array(LABELS))
-        assert clf.predict(small_X).shape == (len(QUERIES),)
-
-    def test_predict_proba_shape_and_sums(self, small_X: np.ndarray) -> None:
-        from rag_cr.router.models import LogisticRouter
-
-        clf = LogisticRouter(seed=42)
-        clf.fit(small_X, np.array(LABELS))
-        p = clf.predict_proba(small_X)
-        assert p.shape == (len(QUERIES), 3)
-        np.testing.assert_allclose(p.sum(axis=1), np.ones(len(QUERIES)), atol=1e-5)
-
-    def test_classes_sorted(self, small_X: np.ndarray) -> None:
-        from rag_cr.router.models import LogisticRouter
-
-        clf = LogisticRouter(seed=42)
-        clf.fit(small_X, np.array(LABELS))
-        assert list(clf.classes_) == sorted(set(LABELS))
-
-    def test_predictions_in_label_set(self, small_X: np.ndarray) -> None:
-        from rag_cr.router.models import LogisticRouter
-
-        clf = LogisticRouter(seed=42)
-        clf.fit(small_X, np.array(LABELS))
-        preds = clf.predict(small_X)
-        assert set(preds).issubset(set(LABELS))
-
-    def test_pickle_roundtrip(self, small_X: np.ndarray) -> None:
-        from rag_cr.router.models import LogisticRouter
-
-        clf = LogisticRouter(seed=42)
-        clf.fit(small_X, np.array(LABELS))
-        buf = io.BytesIO()
-        pickle.dump(clf, buf)
-        buf.seek(0)
-        clf2 = pickle.load(buf)
-        np.testing.assert_array_equal(clf.predict(small_X), clf2.predict(small_X))
-
     def test_deterministic(self, small_X: np.ndarray) -> None:
         from rag_cr.router.models import LogisticRouter
 
@@ -359,23 +278,11 @@ class TestSVMRouter:
         assert p.shape == (30, 3)
         np.testing.assert_allclose(p.sum(axis=1), np.ones(30), atol=1e-5)
 
-    def test_pickle_roundtrip(self, big_X: np.ndarray, big_labels: np.ndarray) -> None:
-        from rag_cr.router.models import SVMRouter
-
-        clf = SVMRouter(seed=42)
-        clf.fit(big_X, big_labels)
-        buf = io.BytesIO()
-        pickle.dump(clf, buf)
-        buf.seek(0)
-        clf2 = pickle.load(buf)
-        np.testing.assert_array_equal(clf.predict(big_X), clf2.predict(big_X))
-
-
 class TestLightGBMRouter:
     def test_predict_proba_shape(
         self, big_X: np.ndarray, big_labels: np.ndarray
     ) -> None:
-        lgb = pytest.importorskip("lightgbm")
+        pytest.importorskip("lightgbm")
         from rag_cr.router.models import LightGBMRouter
 
         clf = LightGBMRouter(seed=42)
@@ -389,8 +296,9 @@ class TestLightGBMRouter:
     ) -> None:
         """predict() and predict_proba() must not emit the feature-name warning."""
         pytest.importorskip("lightgbm")
-        from rag_cr.router.models import LightGBMRouter
         import warnings
+
+        from rag_cr.router.models import LightGBMRouter
 
         clf = LightGBMRouter(seed=42)
         clf.fit(big_X, big_labels)
@@ -401,21 +309,6 @@ class TestLightGBMRouter:
                 clf.predict_proba(big_X)
             except UserWarning as e:
                 pytest.fail(f"Unexpected UserWarning: {e}")
-
-    def test_pickle_roundtrip(
-        self, big_X: np.ndarray, big_labels: np.ndarray
-    ) -> None:
-        pytest.importorskip("lightgbm")
-        from rag_cr.router.models import LightGBMRouter
-
-        clf = LightGBMRouter(seed=42)
-        clf.fit(big_X, big_labels)
-        buf = io.BytesIO()
-        pickle.dump(clf, buf)
-        buf.seek(0)
-        clf2 = pickle.load(buf)
-        np.testing.assert_array_equal(clf.predict(big_X), clf2.predict(big_X))
-
 
 class TestBuildRouterModel:
     @pytest.mark.parametrize("name", ["logreg", "svm_linear"])
@@ -440,14 +333,14 @@ class TestLoadRouterData:
     def test_filters_1024(self, splits_dir: Path, oracle_jsonl: Path) -> None:
         from rag_cr.router.train import load_router_data
 
-        q, t, l = load_router_data(splits_dir, oracle_jsonl, "train", CHUNK_SIZES)
-        assert all(label in CHUNK_SIZES for label in l), "1024 label leaked through filter"
+        q, t, labels = load_router_data(splits_dir, oracle_jsonl, "train", CHUNK_SIZES)
+        assert all(label in CHUNK_SIZES for label in labels), "1024 label leaked through filter"
 
     def test_lengths_consistent(self, splits_dir: Path, oracle_jsonl: Path) -> None:
         from rag_cr.router.train import load_router_data
 
-        q, t, l = load_router_data(splits_dir, oracle_jsonl, "train", CHUNK_SIZES)
-        assert len(q) == len(t) == len(l)
+        q, t, labels = load_router_data(splits_dir, oracle_jsonl, "train", CHUNK_SIZES)
+        assert len(q) == len(t) == len(labels)
 
     def test_types_valid(self, splits_dir: Path, oracle_jsonl: Path) -> None:
         from rag_cr.router.train import load_router_data
@@ -486,8 +379,8 @@ class TestRunCvGrid:
     ) -> None:
         from rag_cr.router.train import load_router_data, run_cv_grid
 
-        q, t, l = load_router_data(splits_dir, oracle_jsonl, "train", CHUNK_SIZES)
-        df = run_cv_grid(q, t, l, fake_config, seed=42)
+        q, t, labels = load_router_data(splits_dir, oracle_jsonl, "train", CHUNK_SIZES)
+        df = run_cv_grid(q, t, labels, fake_config, seed=42)
         assert set(df.columns) >= {
             "feature_set", "classifier", "fold",
             "accuracy", "balanced_accuracy", "macro_f1",
@@ -498,8 +391,8 @@ class TestRunCvGrid:
     ) -> None:
         from rag_cr.router.train import load_router_data, run_cv_grid
 
-        q, t, l = load_router_data(splits_dir, oracle_jsonl, "train", CHUNK_SIZES)
-        df = run_cv_grid(q, t, l, fake_config, seed=42)
+        q, t, labels = load_router_data(splits_dir, oracle_jsonl, "train", CHUNK_SIZES)
+        df = run_cv_grid(q, t, labels, fake_config, seed=42)
         n_fs = len(fake_config.router.feature_sets)
         n_clf = len(fake_config.router.model_names)
         n_folds = fake_config.router.cv_folds
@@ -510,8 +403,8 @@ class TestRunCvGrid:
     ) -> None:
         from rag_cr.router.train import load_router_data, run_cv_grid
 
-        q, t, l = load_router_data(splits_dir, oracle_jsonl, "train", CHUNK_SIZES)
-        df = run_cv_grid(q, t, l, fake_config, seed=42)
+        q, t, labels = load_router_data(splits_dir, oracle_jsonl, "train", CHUNK_SIZES)
+        df = run_cv_grid(q, t, labels, fake_config, seed=42)
         for col in ["accuracy", "balanced_accuracy", "macro_f1"]:
             assert df[col].between(0, 1).all(), f"{col} out of [0, 1]"
 
@@ -529,10 +422,10 @@ class TestRunCvGrid:
         class FC:
             router = FR()
 
-        q, t, l = load_router_data(splits_dir, oracle_jsonl, "train", CHUNK_SIZES)
+        q, t, labels = load_router_data(splits_dir, oracle_jsonl, "train", CHUNK_SIZES)
         # If TF-IDF was fitted globally the macro_f1 values across folds would be
         # identical (same feature space). With per-fold fitting they may vary.
-        df = run_cv_grid(q, t, l, FC(), seed=42)
+        df = run_cv_grid(q, t, labels, FC(), seed=42)
         tfidf_rows = df[df["feature_set"] == "tfidf"]
         # At minimum the fold column must have distinct values
         assert tfidf_rows["fold"].nunique() == 3

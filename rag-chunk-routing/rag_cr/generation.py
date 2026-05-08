@@ -1,3 +1,5 @@
+"""Answer generation backends (vLLM / ollama) behind a single ``generate`` interface."""
+
 from __future__ import annotations
 
 import re

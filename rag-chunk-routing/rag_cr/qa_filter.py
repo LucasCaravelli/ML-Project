@@ -1,3 +1,5 @@
+"""Two-stage QA filtering: primary-only F1 threshold followed by an LLM-judge validation pass."""
+
 from __future__ import annotations
 
 from typing import Any

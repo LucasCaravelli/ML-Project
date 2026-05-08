@@ -1,3 +1,5 @@
+"""Reciprocal-rank fusion across multi-scale chunk retrievals."""
+
 from __future__ import annotations
 
 from .types import RetrievedChunk
@@ -25,6 +27,8 @@ def rrf_fuse(
                 acc[cid] = (rrf, chunk)
     sorted_items = sorted(acc.values(), key=lambda x: x[0], reverse=True)[:top_k]
     return [
-        RetrievedChunk(chunk_id=rc["chunk_id"], text=rc["text"], score=sc, source_size=rc["source_size"])
+        RetrievedChunk(
+            chunk_id=rc["chunk_id"], text=rc["text"], score=sc, source_size=rc["source_size"],
+        )
         for sc, rc in sorted_items
     ]

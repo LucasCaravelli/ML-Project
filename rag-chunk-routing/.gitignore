@@ -28,7 +28,6 @@ Thumbs.db
 artifacts/*
 !artifacts/qa/
 artifacts/qa/*
-!artifacts/qa/qa_raw.jsonl
 !artifacts/qa/qa_validated.jsonl
 !artifacts/qa/qa_rejected.jsonl
 # Splits are deterministic from validated QA + seed, but committing them

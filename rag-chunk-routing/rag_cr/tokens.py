@@ -1,3 +1,5 @@
+"""Token counting under the project's canonical tokenization (whitespace split)."""
+
 from __future__ import annotations
 
 
