@@ -1,3 +1,5 @@
+"""Feature extractors for the router: TF-IDF, MiniLM embeddings, and handcrafted query features."""
+
 from __future__ import annotations
 
 import re
@@ -17,7 +19,17 @@ _TYPES = ["factoid", "multihop", "synthesis"]
 
 
 class FeatureExtractor(Protocol):
-    """Uniform fit/transform contract shared by every candidate feature set."""
+    """Uniform fit/transform contract shared by every candidate feature set.
+
+    Implementations expose three methods, each accepting an optional ``types``
+    list (currently used only by the handcrafted extractor):
+
+    - ``fit(queries, types?)``: fit any internal vocabulary or state on training queries.
+    - ``transform(queries, types?)``: produce a ``(n, d)`` ``float32`` feature matrix.
+    - ``fit_transform(queries, types?)``: fit and transform in a single pass.
+
+    The ``name`` attribute identifies the extractor in CV-grid result tables.
+    """
 
     name: str
 

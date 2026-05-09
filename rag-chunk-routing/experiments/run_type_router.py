@@ -14,36 +14,17 @@ Run from rag-chunk-routing/:
 from __future__ import annotations
 
 import argparse
-import json
 from collections import defaultdict
-from pathlib import Path
 
 import numpy as np
 
 from rag_cr import Config, load_config
 from rag_cr.io import create_run_dir, read_jsonl, write_json, write_jsonl
-
-
-def _read_oracle_gap(artifacts_dir: Path) -> tuple[float | None, float | None]:
-    path = artifacts_dir / "baselines" / "oracle_gap.json"
-    if not path.exists():
-        return None, None
-    data = json.loads(path.read_text())
-    return data.get("oracle_f1_mean"), data.get("best_baseline_f1")
-
-
-def _gap_closure(
-    router_f1: float, baseline_f1: float | None, oracle_f1: float | None
-) -> float | None:
-    if baseline_f1 is None or oracle_f1 is None:
-        return None
-    denom = oracle_f1 - baseline_f1
-    if abs(denom) < 1e-9:
-        return None
-    return (router_f1 - baseline_f1) / denom
+from rag_cr.utils import gap_closure, read_oracle_gap
 
 
 def main(config: Config, config_path: str) -> None:
+    """Apply the per-type best-size policy and write predictions + metrics."""
     artifacts_dir = config.paths.artifacts_dir
     results_dir = config.paths.results_dir
     eval_grid_path = artifacts_dir / "oracle" / "eval_grid.jsonl"
@@ -103,8 +84,8 @@ def main(config: Config, config_path: str) -> None:
         })
 
     mean_f1 = float(np.mean(f1_scores))
-    oracle_f1, baseline_f1 = _read_oracle_gap(artifacts_dir)
-    gap = _gap_closure(mean_f1, baseline_f1, oracle_f1)
+    oracle_f1, baseline_f1 = read_oracle_gap(artifacts_dir)
+    gap = gap_closure(mean_f1, baseline_f1, oracle_f1)
 
     print(f"Type-aware policy on test ({len(pred_rows)} examples):")
     print(f"  mean F1              : {mean_f1:.4f}")

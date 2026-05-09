@@ -1,3 +1,13 @@
+"""Synthesize raw QA pairs from the corpus chunks via the OpenAI API.
+
+Loads the primary-size chunks, allocates collision-free qa_ids that respect
+existing raw / validated / rejected sets, and produces type-stratified QA
+pairs (factoid / multihop / synthesis) appended to artifacts/qa/qa_raw.jsonl.
+Idempotent across runs unless --force is set.
+
+Run from rag-chunk-routing/:
+    python experiments/generate_qa.py --config configs/base.yaml [--limit N] [--force]
+"""
 from __future__ import annotations
 
 import argparse
@@ -75,6 +85,7 @@ def _count_by_type(path: Path) -> dict[str, int]:
 
 
 def main(config: Config, limit: int | None, force: bool) -> None:
+    """Synthesize raw QA pairs and append them to artifacts/qa/qa_raw.jsonl."""
     set_seed(config.project.seed)
     load_dotenv()
 

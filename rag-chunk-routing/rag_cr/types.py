@@ -1,3 +1,5 @@
+"""Shared TypedDicts for chunks, hits, QA pairs, oracle labels, and score records."""
+
 from __future__ import annotations
 
 from typing import TypedDict

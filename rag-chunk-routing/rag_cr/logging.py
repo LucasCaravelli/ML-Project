@@ -1,3 +1,5 @@
+"""Project logger setup with consistent formatting across CLI scripts."""
+
 from __future__ import annotations
 
 import logging
@@ -24,5 +26,6 @@ def configure(level: int = logging.INFO) -> None:
 
 
 def get_logger(name: str) -> logging.Logger:
+    """Return a module-scoped logger, configuring the root handler on first call."""
     configure()
     return logging.getLogger(name)

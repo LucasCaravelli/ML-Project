@@ -1,3 +1,5 @@
+"""System abstractions for evaluation: FixedSize, Fusion, Oracle, and Router variants."""
+
 from __future__ import annotations
 
 from typing import Protocol
@@ -8,6 +10,13 @@ from .retrieval import Retriever
 
 
 class System(Protocol):
+    """Common evaluation interface implemented by FixedSize, Fusion, Oracle, and Router.
+
+    The ``name`` attribute is the system label used in result filenames and tables;
+    ``answer(query, qa_id?)`` returns ``(prediction, passages_used)`` so callers can
+    score both answer quality and retrieval grounding.
+    """
+
     name: str
 
     def answer(self, query: str, qa_id: str | None = None) -> tuple[str, list[str]]:

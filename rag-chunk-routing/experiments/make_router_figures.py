@@ -191,6 +191,7 @@ def _figure_router_per_type(out_dir: Path, artifacts_dir: Path, results_dir: Pat
 
 
 def main(config: Config) -> None:
+    """Generate router-specific figures (comparison and per-type breakdown)."""
     artifacts_dir = config.paths.artifacts_dir
     results_dir = Path(config.paths.results_dir)
     out_dir = results_dir / "figures"

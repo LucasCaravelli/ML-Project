@@ -17,7 +17,7 @@ from __future__ import annotations
 import argparse
 import json
 import sys
-from collections import Counter, defaultdict
+from collections import defaultdict
 from pathlib import Path
 from typing import Any
 
@@ -338,7 +338,7 @@ def _figure_size_distribution(out_dir: Path, size_dist: dict) -> None:
             offsets, shares, width=bar_width,
             color=PALETTE[size], label=f"size = {size}", edgecolor="black", linewidth=0.5,
         )
-        for bar, share in zip(bars, shares):
+        for bar, share in zip(bars, shares, strict=False):
             ax.annotate(
                 f"{share:.1f}%",
                 xy=(bar.get_x() + bar.get_width() / 2, bar.get_height()),
@@ -386,7 +386,7 @@ def _figure_oracle_f1_distribution(out_dir: Path, eval_grid: list) -> None:
 
     fig, axes = plt.subplots(1, 3, figsize=(7.5, 2.6), sharey=True)
     bins = np.linspace(0, 1, 11)
-    for ax, qtype in zip(axes, TYPES_ORDER):
+    for ax, qtype in zip(axes, TYPES_ORDER, strict=False):
         values = list(by_type_qa.get(qtype, {}).values())
         ax.hist(values, bins=bins, color="#4c72b0", edgecolor="black", linewidth=0.5)
         mean_v = float(np.mean(values)) if values else 0.0
@@ -454,6 +454,7 @@ inside a `figure` environment for figures.
 
 
 def main(config: Config) -> None:
+    """Generate report-ready tables and figures from baseline / oracle artifacts."""
     artifacts_dir = config.paths.artifacts_dir
     baselines_dir = artifacts_dir / "baselines"
     oracle_dir = artifacts_dir / "oracle"

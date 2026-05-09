@@ -1,3 +1,5 @@
+"""Unified retriever: serves single-scale and RRF-fused multi-scale queries."""
+
 from __future__ import annotations
 
 from pathlib import Path
@@ -48,12 +50,15 @@ class Retriever:
         scores, indices = search_index(get_index_path(self.artifacts_dir, size), query_emb, k)
         chunks = self._load_chunks(size)
         result: list[RetrievedChunk] = []
-        for score, idx in zip(scores[0], indices[0]):
+        for score, idx in zip(scores[0], indices[0], strict=False):
             if idx < 0:
                 continue
             c = chunks[int(idx)]
             result.append(
-                RetrievedChunk(chunk_id=c["chunk_id"], text=c["text"], score=float(score), source_size=size)
+                RetrievedChunk(
+                    chunk_id=c["chunk_id"], text=c["text"],
+                    score=float(score), source_size=size,
+                )
             )
         return result
 
@@ -69,7 +74,13 @@ class Retriever:
                 c = chunks[int(idx)]
                 rrf = 1.0 / (fusion_k + rank)
                 scored.append(
-                    (rrf, RetrievedChunk(chunk_id=c["chunk_id"], text=c["text"], score=rrf, source_size=size))
+                    (
+                        rrf,
+                        RetrievedChunk(
+                            chunk_id=c["chunk_id"], text=c["text"],
+                            score=rrf, source_size=size,
+                        ),
+                    )
                 )
         scored.sort(key=lambda x: x[0], reverse=True)
         return [rc for _, rc in scored[:k]]

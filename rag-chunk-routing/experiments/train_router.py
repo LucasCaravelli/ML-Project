@@ -1,9 +1,19 @@
+"""Train the chunk-size router via stratified CV grid search and val re-ranking.
+
+For each {feature_set} × {classifier} combination, runs stratified-K-fold CV
+over the train split, ranks the top finalists by val macro-F1, and re-ranks
+those finalists by the actual val RAG F1 (looking up answers from the eval
+grid) to pick the model that maximizes downstream RAG quality. Saves the
+winning extractor + classifier + metadata under artifacts/router/.
+
+Run from rag-chunk-routing/:
+    python experiments/train_router.py --config configs/base.yaml
+"""
 from __future__ import annotations
 
 import argparse
 import json
 import pickle
-import subprocess
 from pathlib import Path
 
 from rag_cr import Config, load_config, set_seed
@@ -13,16 +23,9 @@ from rag_cr.router.train import (
     rank_all_on_val,
     run_cv_grid,
 )
+from rag_cr.utils import git_hash
 
 _N_FINALISTS = 3
-
-
-def _git_hash() -> str:
-    """Return the current git commit hash, or 'unknown' on failure."""
-    try:
-        return subprocess.check_output(["git", "rev-parse", "HEAD"], text=True).strip()
-    except Exception:
-        return "unknown"
 
 
 def _oracle_labels_path(config: Config) -> Path:
@@ -37,7 +40,7 @@ def _val_rag_f1(
     val_rows: list[dict],
     config: Config,
 ) -> float | None:
-    """Run RAG on val with predicted chunk sizes; return mean F1, or None if pipeline unavailable."""
+    """Run RAG on val with predicted sizes; return mean F1, or None if pipeline unavailable."""
     try:
         from rag_cr.metrics import score as rag_score
         from rag_cr.systems import FixedSizeSystem
@@ -52,9 +55,11 @@ def _val_rag_f1(
         systems[size] = FixedSizeSystem(size, config)
 
     f1_scores: list[float] = []
-    for row, pred_size in zip(val_rows, predictions.tolist()):
+    for row, pred_size in zip(val_rows, predictions.tolist(), strict=False):
         try:
-            pred_text, passages = systems[int(pred_size)].answer(row["question"], qa_id=row["qa_id"])
+            pred_text, passages = systems[int(pred_size)].answer(
+                row["question"], qa_id=row["qa_id"]
+            )
             s = rag_score(pred_text, row["answer"], passages)
             f1_scores.append(float(s["f1"]))
         except Exception:
@@ -68,7 +73,7 @@ def main(config: Config, config_path: str) -> None:
     set_seed(config.project.seed)
     seed = config.project.seed
 
-    print(f"git commit : {_git_hash()}")
+    print(f"git commit : {git_hash()}")
     print(f"config     : {config_path}")
     print()
 

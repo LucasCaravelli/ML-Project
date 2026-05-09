@@ -1,33 +1,36 @@
+"""Evaluate the RRF fusion baseline on the test split and report the oracle gap.
+
+Runs the full retrieve→generate→score pipeline with chunk_size='fusion',
+which combines per-size retrievals via reciprocal-rank fusion. Compares F1
+against the best fixed-size baseline and the oracle upper bound from
+artifacts/baselines/oracle_gap.json.
+
+Run from rag-chunk-routing/:
+    python experiments/run_fusion.py --config configs/base.yaml
+"""
 from __future__ import annotations
 
 import argparse
 import json
-import subprocess
 
-from rag_cr import Config, load_config, set_seed
-from rag_cr import pipeline as _pipeline
-
-
-def _git_hash() -> str:
-    try:
-        return subprocess.check_output(["git", "rev-parse", "HEAD"], text=True).strip()
-    except Exception:
-        return "unknown"
+from rag_cr import Config, load_config, pipeline, set_seed
+from rag_cr.utils import git_hash
 
 
 def main(config: Config, config_path: str) -> None:
+    """Evaluate RRF fusion on the test split and report the oracle gap."""
     set_seed(config.project.seed)
 
     test_path = config.paths.artifacts_dir / "splits" / "test.jsonl"
     if not test_path.exists():
         raise FileNotFoundError(f"Test split not found at {test_path}")
 
-    print(f"git commit : {_git_hash()}")
+    print(f"git commit : {git_hash()}")
     print(f"config     : {config_path}")
     print(f"test split : {test_path}")
     print()
 
-    run_dir = _pipeline.run("fusion", test_path, config)
+    run_dir = pipeline.run("fusion", test_path, config)
 
     # --- Sanity check: fusion vs best fixed-size baseline ---
     oracle_gap_path = config.paths.artifacts_dir / "baselines" / "oracle_gap.json"

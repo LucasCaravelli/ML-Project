@@ -42,7 +42,6 @@ from pathlib import Path
 from typing import Any
 
 import matplotlib.pyplot as plt
-import numpy as np
 
 from rag_cr import Config, get_logger, load_config
 from rag_cr.io import read_jsonl
@@ -483,6 +482,7 @@ def _summary_md(
 
 
 def main(config: Config) -> None:
+    """Build the accuracy-cost frontier plot across all evaluated systems."""
     points, ref = _collect_all(config)
     issues = _sanity_check(points, ref)
 

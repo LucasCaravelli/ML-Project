@@ -6,13 +6,20 @@ import pytest
 
 from rag_cr.config import load_config
 from rag_cr.retrieval import Retriever
-from rag_cr.types import RetrievedChunk
+
+# Every test in this file requires a built artifacts/ directory (FAISS indices +
+# chunk files produced by `make indices`). Run `pytest -m "not integration"` to
+# skip them on a fresh checkout.
+pytestmark = pytest.mark.integration
 
 QUERY = "What is machine learning?"
 
 
 @pytest.fixture
 def retriever(project_root: Path) -> Retriever:
+    indices_dir = project_root / "artifacts" / "indices"
+    if not indices_dir.exists() or not any(indices_dir.glob("*.faiss")):
+        pytest.skip("Built artifacts/indices/ required; run `make indices` first.")
     cfg = load_config(project_root / "configs" / "base.yaml")
     return Retriever(cfg, artifacts_dir=project_root / "artifacts")
 

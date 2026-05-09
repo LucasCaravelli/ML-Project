@@ -1,0 +1,46 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: rag-chunk-routing
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: rag-chunk-routing/pyproject.toml
+
+      - name: Install package + dev dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[dev]"
+
+      - name: Lint with ruff
+        run: ruff check .
+
+      - name: Run torch-free test suite
+        # The torch-dependent tests (chunking, retrieval, router, qa_*) download
+        # large HuggingFace models on first run; we restrict CI to the subset
+        # that runs offline, deterministically, in under a second.
+        run: |
+          pytest \
+            tests/test_metrics.py \
+            tests/test_oracle.py \
+            tests/test_config.py \
+            tests/test_splits.py \
+            tests/test_fusion.py \
+            tests/test_io.py \
+            tests/test_utils.py \
+            tests/test_corpus.py

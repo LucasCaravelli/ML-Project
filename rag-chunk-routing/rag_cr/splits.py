@@ -1,3 +1,5 @@
+"""Deterministic stratified train/val/test split assignment over QA pairs."""
+
 from __future__ import annotations
 
 import math
@@ -5,7 +7,6 @@ import random
 from collections import defaultdict
 
 from .types import QAPair
-
 
 SPLIT_NAMES = ("train", "val", "test")
 

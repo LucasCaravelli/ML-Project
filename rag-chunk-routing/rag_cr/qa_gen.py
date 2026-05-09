@@ -1,3 +1,5 @@
+"""Synthetic QA generation via OpenAI API, stratified by question type."""
+
 from __future__ import annotations
 
 import json
@@ -170,7 +172,8 @@ def generate_qa(
 
     Each pair is produced in two LLM calls:
       1. Question generation (temperature = qa_cfg.generation.question_temperature)
-      2. Answer generation for the produced question (temperature = qa_cfg.generation.answer_temperature)
+      2. Answer generation for the produced question
+         (temperature = qa_cfg.generation.answer_temperature)
 
     Produces up to ``limit`` (or ``qa_cfg.initial_batch_size``) candidates,
     stratified by ``qa_cfg.type_distribution``. All pairs are returned with
@@ -256,7 +259,7 @@ def generate_qa(
 
     pairs: list[QAPair] = []
     skipped_q = skipped_a = parse_err = missing_field = 0
-    for i, (qtype, chunk_idx) in enumerate(work):
+    for _, (qtype, chunk_idx) in enumerate(work):
         primary = chunks[chunk_idx]
         neighbors = (
             _neighbors(chunks, chunk_idx, qa_cfg.neighbor_window)

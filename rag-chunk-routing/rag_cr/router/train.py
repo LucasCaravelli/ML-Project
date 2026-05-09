@@ -1,6 +1,7 @@
+"""Router training: stratified CV grid search and validation-set re-ranking by RAG F1."""
+
 from __future__ import annotations
 
-import copy
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -11,7 +12,7 @@ from sklearn.metrics import balanced_accuracy_score, f1_score
 from sklearn.model_selection import StratifiedKFold
 
 from ..io import read_jsonl
-from .features import ConcatExtractor, FeatureExtractor, build_feature_extractor
+from .features import FeatureExtractor, build_feature_extractor
 from .models import RouterModel, build_router_model
 
 
@@ -31,7 +32,7 @@ def load_router_data(
     split: str,
     router_chunk_sizes: list[int],
 ) -> tuple[list[str], list[str], list[int]]:
-    """Return (questions, types, labels) for a split, excluding oracle_best_size not in router_chunk_sizes."""
+    """Return (questions, types, labels) for a split, dropping rows whose oracle size is retired."""
     split_rows = read_jsonl(splits_dir / f"{split}.jsonl")
     oracle_rows = read_jsonl(oracle_labels_path)
 
@@ -124,7 +125,7 @@ def rank_all_on_val(
     config: Any,
     seed: int,
 ) -> list[tuple[FeatureExtractor, RouterModel, dict[str, Any]]]:
-    """Refit every grid cell on full train, score on val; return list sorted by val macro-F1 desc."""
+    """Refit every grid cell on full train, score on val; return list sorted by val macro-F1."""
     y_train = np.array(train_labels)
     y_val = np.array(val_labels)
     cells: list[tuple[float, FeatureExtractor, RouterModel, dict[str, Any]]] = []

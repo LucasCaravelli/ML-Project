@@ -1,3 +1,13 @@
+"""Interactive human review CLI: accept, reject, or edit each filtered QA pair.
+
+Reads the post-filter QA set, displays each pair with its primary chunk and
+neighboring context, and lets the reviewer accept (→ qa_validated.jsonl),
+reject (→ qa_rejected.jsonl), or edit fields before accepting. Decisions
+are persisted incrementally so a session can be resumed mid-way.
+
+Run from rag-chunk-routing/:
+    python experiments/validate_qa.py --config configs/base.yaml
+"""
 from __future__ import annotations
 
 import argparse
@@ -19,7 +29,6 @@ from rag_cr.io import (
     write_jsonl,
 )
 from rag_cr.types import Chunk, QAPair
-
 
 RULE = "─"
 
@@ -136,6 +145,7 @@ def _review_pair(
 
 
 def main(config: Config) -> None:
+    """Run the interactive QA review loop, persisting decisions incrementally."""
     set_seed(config.project.seed)
 
     raw_path = get_qa_raw_path(config.paths.artifacts_dir)

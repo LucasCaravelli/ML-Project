@@ -59,61 +59,6 @@ EVAL_GRID_ROWS = [
 
 
 # ---------------------------------------------------------------------------
-# _gap_closure
-# ---------------------------------------------------------------------------
-
-class TestGapClosure:
-    def _fn(self, router_f1, baseline_f1, oracle_f1):
-        from experiments.run_type_router import _gap_closure
-        return _gap_closure(router_f1, baseline_f1, oracle_f1)
-
-    def test_perfect_router(self):
-        assert self._fn(0.3, 0.2, 0.3) == pytest.approx(1.0)
-
-    def test_no_improvement(self):
-        assert self._fn(0.2, 0.2, 0.3) == pytest.approx(0.0)
-
-    def test_negative_gap(self):
-        result = self._fn(0.1, 0.2, 0.3)
-        assert result == pytest.approx(-1.0)
-
-    def test_halfway(self):
-        assert self._fn(0.25, 0.2, 0.3) == pytest.approx(0.5)
-
-    def test_none_when_baseline_missing(self):
-        assert self._fn(0.25, None, 0.3) is None
-
-    def test_none_when_oracle_missing(self):
-        assert self._fn(0.25, 0.2, None) is None
-
-    def test_none_when_zero_denominator(self):
-        assert self._fn(0.3, 0.3, 0.3) is None
-
-
-# ---------------------------------------------------------------------------
-# _read_oracle_gap
-# ---------------------------------------------------------------------------
-
-class TestReadOracleGap:
-    def test_reads_values(self, tmp_path):
-        from experiments.run_type_router import _read_oracle_gap
-
-        gap_file = tmp_path / "baselines" / "oracle_gap.json"
-        _write_oracle_gap(gap_file, oracle_f1=0.30, baseline_f1=0.21)
-
-        oracle, baseline = _read_oracle_gap(tmp_path)
-        assert oracle == pytest.approx(0.30)
-        assert baseline == pytest.approx(0.21)
-
-    def test_returns_none_when_missing(self, tmp_path):
-        from experiments.run_type_router import _read_oracle_gap
-
-        oracle, baseline = _read_oracle_gap(tmp_path)
-        assert oracle is None
-        assert baseline is None
-
-
-# ---------------------------------------------------------------------------
 # main() — end-to-end logic (no LLM/GPU required)
 # ---------------------------------------------------------------------------
 
@@ -171,42 +116,21 @@ class TestTypeRouterMain:
         expected = {"q0", "q1", "q2", "q3", "q4", "q5"}
         assert qa_ids == expected
 
-    def test_predicted_sizes_in_chunk_sizes(self, fake_config, results_dir):
-        self._run(fake_config)
-        run_dir = next((results_dir / "runs").glob("*_type_router"))
-        from rag_cr.io import read_jsonl
-        for row in read_jsonl(run_dir / "predictions.jsonl"):
-            assert row["predicted_chunk_size"] in CHUNK_SIZES
-
-    def test_factoid_routed_to_128(self, fake_config, results_dir):
-        self._run(fake_config)
-        run_dir = next((results_dir / "runs").glob("*_type_router"))
-        from rag_cr.io import read_jsonl
-        factoid_preds = [
-            r["predicted_chunk_size"] for r in read_jsonl(run_dir / "predictions.jsonl")
-            if r["question_type"] == "factoid"
-        ]
-        assert all(s == 128 for s in factoid_preds)
-
-    def test_multihop_routed_to_256(self, fake_config, results_dir):
+    @pytest.mark.parametrize(
+        "qtype,expected_size",
+        [("factoid", 128), ("multihop", 256), ("synthesis", 512)],
+    )
+    def test_type_routes_to_best_size(
+        self, fake_config, results_dir, qtype, expected_size
+    ):
         self._run(fake_config)
         run_dir = next((results_dir / "runs").glob("*_type_router"))
         from rag_cr.io import read_jsonl
         preds = [
             r["predicted_chunk_size"] for r in read_jsonl(run_dir / "predictions.jsonl")
-            if r["question_type"] == "multihop"
+            if r["question_type"] == qtype
         ]
-        assert all(s == 256 for s in preds)
-
-    def test_synthesis_routed_to_512(self, fake_config, results_dir):
-        self._run(fake_config)
-        run_dir = next((results_dir / "runs").glob("*_type_router"))
-        from rag_cr.io import read_jsonl
-        preds = [
-            r["predicted_chunk_size"] for r in read_jsonl(run_dir / "predictions.jsonl")
-            if r["question_type"] == "synthesis"
-        ]
-        assert all(s == 512 for s in preds)
+        assert preds and all(s == expected_size for s in preds)
 
     def test_mean_f1_matches_manual_computation(self, fake_config, results_dir):
         self._run(fake_config)

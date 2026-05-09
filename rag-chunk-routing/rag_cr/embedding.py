@@ -1,3 +1,5 @@
+"""BGE-small dense embedding of chunks and queries via HuggingFace transformers."""
+
 from __future__ import annotations
 
 from functools import lru_cache
