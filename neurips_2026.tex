@@ -14,7 +14,8 @@
 \usepackage{graphicx}
 
 \workshoptitle{30562 --- Machine Learning and Artificial Intelligence}
-\title{Project Report Title}
+\title{Can a Cheap Classifier Route RAG Chunk Sizes?\\
+       Evidence from a Medical QA Corpus}
 
 \author{%
   Author One \\
@@ -37,71 +38,245 @@
 \maketitle
 
 \begin{abstract}
-A concise summary of the problem, the approach, and the main findings.
-The abstract should be self-contained and not exceed one paragraph.
+Retrieval-augmented generation (RAG) systems retrieve text chunks before
+generating an answer; the optimal chunk size varies per query, yet no cheap
+mechanism is known for selecting it. We ask whether a query-only classifier
+can predict the best chunk size and recover the per-query oracle gap without
+the retrieval cost of multi-scale fusion. On a medical QA benchmark
+(Friedreich Ataxia corpus, 398 validated question-answer pairs, 84 test
+questions, action space \{128, 256, 512\} tokens), the per-query oracle
+ceiling sits 8.19~F1 points above the best fixed-size baseline. We train a
+supervised router over a 3$\times$3 feature-extractor $\times$ classifier
+grid with two-pass validation selection. The selected model (MiniLM
+embeddings with logistic regression) achieves RAG~F1\,=\,0.171 on test,
+below the best fixed baseline (0.213), a gap-closure fraction of $-0.51$.
+A parameter-free type-aware heuristic that routes each question to its
+type's best chunk size achieves F1\,=\,0.229 (+0.20 gap closure),
+outperforming both the trained router and any fixed-size baseline. These
+results suggest that on this corpus, question type is the only reliable
+chunk-size routing signal, and a cheap trained classifier captures nothing
+more.
 \end{abstract}
 
 \section{Introduction}
 
-Motivate the problem you are solving.
-What is the research question?
-Why is it interesting or important?
-Briefly summarise what you do and what you find.
+Retrieval-augmented generation (RAG)~\cite{lewis2020rag} retrieves relevant
+text passages before conditioning a language model to generate an answer.
+A central hyperparameter of any RAG system is \emph{chunk size}: the token
+length at which documents are split before embedding and indexing. Smaller
+chunks yield higher retrieval precision for short factoid queries; larger
+chunks provide the cross-sentence context that multi-hop and synthesis
+questions require. In practice, a single chunk size is chosen globally,
+leaving per-query performance on the table.
+
+The gap between the best fixed-size system and a \emph{per-question oracle}
+that always picks the optimal chunk size measures exactly how much is left
+on the table. On our corpus this oracle gap is 8.19~F1 points, with the
+headroom concentrated in factoid questions (+14.63~pts). Closing this gap
+via per-query routing is attractive: the routing classifier reads only the
+query text, adds negligible latency, and, if accurate, recovers oracle-level
+performance at single-index retrieval cost---unlike multi-scale RRF fusion,
+which queries all indices simultaneously.
+
+We evaluate this hypothesis experimentally. We build a supervised router
+over three feature families (TF-IDF bigrams, frozen MiniLM sentence
+embeddings, and 13-dimensional handcrafted features) and three classifiers
+(logistic regression, linear SVM, LightGBM) using five-fold stratified
+cross-validation. A two-pass selection procedure chooses the winner by
+end-to-end validation RAG F1 rather than classification accuracy alone.
+
+Our main finding is negative: the trained router scores below the best
+fixed-size baseline on the test split, with a gap-closure fraction of
+$-0.51$. A parameter-free type-aware heuristic---routing factoid questions
+to size 128, multihop to 256, and synthesis to 512---outperforms both the
+trained model and the fixed baseline, achieving +0.20 gap closure with zero
+training. This demonstrates that question type encodes all the routing
+signal present in this dataset, and that the learned features add nothing.
+We present a full diagnostic analysis and discuss three compounding causes of
+the router's failure.
 
 \section{Background and Related Work}
 
-Describe any prior work your project builds on.
-Cite relevant papers and explain how your work relates to them.
+\paragraph{Retrieval-Augmented Generation.}
+Lewis et al.~\cite{lewis2020rag} introduced RAG as a general framework for
+knowledge-intensive NLP: a retriever fetches top-$k$ passages from a corpus,
+which are then concatenated with the question and passed to a generator.
+Our setup follows this design with FAISS dense retrieval~\cite{johnson2019faiss}
+and a Qwen2.5-7B generator~\cite{qwen2025}.
+
+\paragraph{Chunk size in RAG.}
+Chunking strategy directly affects retrieval quality~\cite{lewis2020rag}.
+Smaller chunks improve precision; larger chunks provide richer context.
+Several works have explored fixed chunk-size selection or dynamic
+segmentation~\cite{shi2024large}, but per-query adaptive routing at the
+chunk-size level has received little systematic study.
+
+\paragraph{Multi-scale fusion.}
+Reciprocal Rank Fusion (RRF)~\cite{cormack2009rrf} merges ranked lists from
+multiple retrieval systems by scoring each document as
+$\sum_i (c + r_i)^{-1}$, where $r_i$ is its rank in list $i$ and $c$ is a
+smoothing constant. Retrieving from all chunk-size indices and fusing with
+RRF is a natural alternative to routing: it trades retrieval cost for
+robustness.
+
+\paragraph{Query routing.}
+Routing queries to specialised retrieval configurations has been studied in
+the context of multi-domain corpora~\cite{asai2023selfrag} and
+mixture-of-experts RAG~\cite{shi2024large}. Our setting is narrower: a
+single corpus, a single generator, and a discrete action space of three
+chunk sizes.
 
 \section{Method}
 
-Describe your approach clearly and precisely.
-Include any mathematical formulation, model architecture, or algorithm
-that is central to your work.
+\subsection{Corpus and QA Dataset}
+
+The corpus is medical literature on Friedreich Ataxia ($\approx$1.4\,MB of
+plain text). We generate 398 validated question-answer pairs using a
+GPT-based synthetic pipeline followed by an LLM judge filter and a human
+accept/reject review pass. Questions are stratified across three types:
+factoid (single-hop, precise answer), multihop (requires bridging multiple
+passages), and synthesis (requires document-level aggregation). Dataset
+composition is shown in Table~\ref{tab:qa-composition}. The test split is
+balanced across types ($n=28$ per type, $n=84$ total).
+
+\input{rag-chunk-routing/results/figures/table_qa_composition}
+
+\subsection{Retrieval Setup}
+
+We chunk the corpus at four token widths---128, 256, 512, and 1024---using
+a tokenizer-aware sliding window. Chunk size 1024 is retained for ablation
+purposes but excluded from the canonical action space (see
+Section~\ref{sec:ablations}). Each chunk set is embedded with
+BAAI/BGE-small-en-v1.5~\cite{bge2023} and indexed in a FAISS flat
+L2 index~\cite{johnson2019faiss}. At query time, retrieval returns the
+top-$k$ chunks for the selected size, which are concatenated with the
+question and passed to Qwen2.5-7B-Instruct~\cite{qwen2025} to generate
+an answer.
+
+\subsection{Evaluation Metrics}
+
+We report three primary metrics on the test split:
+\textbf{Token-overlap F1} (bag-of-words, after normalisation),
+\textbf{Exact Match (EM)}, and
+\textbf{Faithfulness} (fraction of unique prediction tokens found in the
+retrieved passages, a proxy for hallucination).
+We additionally track \textbf{retrieval cost} as the total number of tokens
+across the retrieved chunks per query.
+All scoring is deterministic; no LLM-as-judge is used at evaluation time.
+
+\subsection{Oracle Upper Bound}
+
+For every test question we run all three chunk sizes, score the resulting
+answer, and assign the best chunk size by F1 (tiebreak: EM, then smaller
+size). The mean F1 of this oracle is our upper bound.
+We define the \emph{oracle gap} as $\text{oracle F1} - \text{best baseline F1}$
+and the \emph{gap-closure fraction} of any system as:
+\begin{equation}
+  \text{gap closure} = \frac{\text{system F1} - \text{best baseline F1}}{\text{oracle F1} - \text{best baseline F1}}.
+\end{equation}
+
+\subsection{Systems}
+
+\paragraph{Fixed-size baselines.}
+Three systems that always retrieve from the same chunk-size index:
+Fixed-128, Fixed-256, and Fixed-512.
+
+\paragraph{RRF fusion.}
+Retrieves from all three indices simultaneously and merges using RRF with
+fusion constant $c=60$ and top-$k=5$. This system incurs approximately
+$3\times$ the retrieval I/O but queries each index independently.
+
+\paragraph{Chunk-size router.}
+A supervised classifier that maps a question to a predicted chunk size. We
+train over a grid of three feature extractors and three classifiers.
+
+\textit{Feature extractors.}
+TF-IDF: bag-of-bigrams with up to 10\,000 features (fitted inside each CV
+fold to prevent leakage).
+MiniLM: frozen sentence embeddings from \texttt{all-MiniLM-L6-v2}~\cite{reimers2019sbert}
+(384 dimensions), module-level singleton cache.
+Handcrafted: 13-dimensional deterministic vector (query length, question-word
+one-hot, heuristic NER count, question-type one-hot).
+
+\textit{Classifiers.}
+Logistic regression, linear SVM (probability-calibrated via
+\texttt{CalibratedClassifierCV}), and LightGBM~\cite{ke2017lightgbm}, all
+with class-balanced weighting to counteract the 82\% majority class (size 128).
+
+\textit{Two-pass model selection.}
+Standard macro-F1 selection on class-imbalanced data favours classifiers
+that predict the majority class. We apply a two-pass procedure: (1) rank all
+9 grid cells by 5-fold validation macro-F1; (2) re-fit the top-3 cells on
+the full training set and re-rank by end-to-end validation RAG~F1, running
+the full pipeline with the predicted chunk sizes. The winner is the cell with
+the highest validation RAG~F1. The selected model is
+\textit{MiniLM + logistic regression}
+(val macro-F1\,=\,0.416, val RAG~F1\,=\,0.278).
+
+\paragraph{Type-aware heuristic.}
+A parameter-free baseline that routes each question to the chunk size with
+the highest mean F1 for its question type across the training set, as read
+from the oracle eval grid (no new inference). The type-best sizes are:
+factoid $\to$ 128, multihop $\to$ 256, synthesis $\to$ 512.
 
 \section{Experiments}
 
-Describe your experimental setup: dataset(s), baselines, evaluation metrics,
-and implementation details (model size, optimiser, hyperparameters).
+\subsection{Main Results}
 
-\subsection{Results}
+Table~\ref{tab:main-results} reports fixed-size baselines and the oracle
+ceiling. Size~128 is the strongest fixed-size system (F1\,=\,0.213); the
+oracle ceiling is F1\,=\,0.295, leaving a gap of 8.19~F1~points.
 
-Present your main results using tables or figures.
-Compare against baselines where applicable.
-
-% Fixed-size baselines and oracle
 \input{rag-chunk-routing/results/figures/table_main_results}
+
+Table~\ref{tab:full-results} places all systems on a common footing.
+The type-aware heuristic (+0.20 gap closure) is the only system that
+consistently improves over the best fixed baseline. RRF fusion achieves
+F1\,=\,0.223 at the cost of querying all three indices simultaneously.
+The trained router underperforms the fixed baseline.
+Figure~\ref{fig:frontier} summarises all systems on the
+accuracy--cost frontier.
+
+\begin{table}[t]
+\centering
+\caption{Full system comparison on the test split ($n=84$).
+Gap closure\,=\,$(\text{system F1} - 0.213)\,/\,(0.295 - 0.213)$.
+Retrieval cost is the mean number of tokens across retrieved passages per
+query. RRF fusion retrieves from all three indices; the cost reflects the
+merged top-5 chunks.}
+\label{tab:full-results}
+\begin{tabular}{lrrrrr}
+\toprule
+System & F1 & EM & Faithfulness & Cost (tok) & Gap closure \\
+\midrule
+Fixed (size\,=\,128) & 0.213 & 0.143 & 0.363 & $\sim$570 & 0.00 \\
+Fixed (size\,=\,256) & 0.170 & 0.071 & 0.364 & $\sim$570 & $-0.52$ \\
+Fixed (size\,=\,512) & 0.170 & 0.083 & 0.314 & $\sim$570 & $-0.53$ \\
+RRF Fusion           & 0.223 & 0.143 & 0.367 & $\sim$820 & $+0.13$ \\
+Type-aware heuristic & 0.229 & -- & -- & $\sim$570 & $+0.20$ \\
+Router (MiniLM+LR)   & 0.171 & 0.107 & -- & $\sim$570 & $-0.51$ \\
+\midrule
+\textbf{Oracle}      & \textbf{0.295} & -- & -- & $\sim$570 & 1.00 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\begin{figure}[h]
+  \centering
+  \includegraphics[width=0.85\linewidth]{rag-chunk-routing/results/figures/frontier.pdf}
+  \caption{Accuracy--cost frontier on the test split. Each system is one
+    point; the dashed line marks the oracle ceiling. The type-aware heuristic
+    achieves the best F1 at single-index cost. RRF fusion improves over the
+    fixed baselines at moderate extra cost. The trained router sits below
+    Fixed-128 despite identical retrieval cost.}
+  \label{fig:frontier}
+\end{figure}
 
 \subsection{Chunk-Size Router}
 
-We train a supervised router that maps each question to a predicted optimal
-chunk size in $\{128, 256, 512\}$.
-The router is trained on oracle labels (the chunk size that maximises F1 for
-each question on the validation split) using a cross-validated grid search
-over three feature extractors and three classifiers.
-
-\paragraph{Feature extractors.}
-\textit{TF-IDF}: bag-of-bigrams with up to 10\,000 features.
-\textit{MiniLM}: frozen sentence embeddings from
-\texttt{all-MiniLM-L6-v2} (384 dimensions).
-\textit{Handcrafted}: 13-dimensional deterministic features (query length,
-question-word one-hot, heuristic NER count, question-type one-hot).
-
-\paragraph{Classifiers.}
-Logistic regression, linear SVM, and LightGBM, all tuned via 5-fold
-stratified cross-validation on the training split ($n=237$).
-
-\paragraph{Two-pass model selection.}
-The top-3 grid cells by validation macro-F1 are re-ranked by their
-end-to-end validation RAG F1 (running the full pipeline with predicted
-chunk sizes), and the winner is selected by RAG F1.
-The selected model is \textit{MiniLM + logistic regression}
-(val macro-F1 = 0.416, val RAG F1 = 0.278).
-
-\paragraph{Test results.}
-Table~\ref{tab:router-results} and Figure~\ref{fig:router-comparison}
-report test-set performance.
-The router achieves a classification macro-F1 of 0.292 and a mean RAG F1
+Table~\ref{tab:router-results} and Figure~\ref{fig:router-comparison} report
+the router evaluation in detail.
+The router achieves a classification macro-F1 of 0.292 and a mean RAG~F1
 of 0.171, below the best fixed-size baseline (0.213).
 The gap-closure fraction is $-0.51$, indicating that the router's
 mispredictions hurt more than its correct predictions help.
@@ -139,44 +314,190 @@ Figure~\ref{fig:router-per-type} shows the per-type breakdown.
 
 \paragraph{Analysis.}
 Three factors explain the trained router's negative result.
-First, the training set is small (237 examples), limiting generalisation;
-classification macro-F1 drops from 0.416 on validation to 0.292 on test.
-Second, the oracle--baseline gap is only 8.2~F1~points
-(Table~\ref{tab:main-results}), so even modest routing errors erase the
-potential gain.
-Third, the type-aware heuristic demonstrates that question type is the
-most informative routing signal: routing by type alone outperforms the
-trained model, confirming that the learned features do not capture
-information beyond what question type already encodes.
+
+\textit{Small training set.}
+The router is trained on 237 examples across three classes.
+With 82\% of oracle labels in class~128 (Figure~\ref{fig:size-dist}),
+even a class-balanced classifier has limited signal for the minority
+classes. Classification macro-F1 drops from 0.416 on validation to
+0.292 on test, confirming that the model does not generalise.
+
+\textit{Narrow oracle gap.}
+The oracle--baseline gap is 8.19~F1~points overall, but concentrated in
+factoid questions (+14.63~pts, Table~\ref{tab:per-type-gap}).
+Multihop (+3.02~pts) and synthesis (+2.05~pts) have near-zero routing
+headroom under this generator.
+Routing errors on factoid questions---the type with the most headroom
+but also the highest 128-token dominance---erase the potential gain.
+
+\textit{Type is the dominant signal.}
+The type-aware heuristic outperforms the trained router without accessing
+any learned features, demonstrating that the relevant routing dimension
+is already encoded in the question-type label.
+TF-IDF bigrams, MiniLM embeddings, and handcrafted query features all
+fail to extract information beyond what the type label provides.
 
 % Per-type gap table
 \input{rag-chunk-routing/results/figures/table_per_type_gap}
 
-\subsection{Ablations}
+\begin{figure}[h]
+  \centering
+  \includegraphics[width=0.75\linewidth]{rag-chunk-routing/results/figures/fig_size_distribution.pdf}
+  \caption{Oracle-best chunk-size distribution across splits. Size~128
+    wins the per-question oracle on 82\% of test questions, creating
+    severe class imbalance for the router.}
+  \label{fig:size-dist}
+\end{figure}
 
-If applicable, include ablation studies that isolate the contribution
-of individual design choices.
+\subsection{Ablations}
+\label{sec:ablations}
+
+\paragraph{Action space: dropping chunk size 1024.}
+We initially evaluate a four-size action space \{128, 256, 512, 1024\}.
+Table~\ref{tab:action-space-ablation} shows that size~1024 is dominated: it
+achieves the worst single-size baseline F1 (0.157) and is the rarest
+oracle winner ($\approx 6\%$ of test questions).
+Including 1024 widens the oracle gap by +2.42~F1~points (from +8.19 to
++10.61) but also asks the router to learn a 4\textsuperscript{th} class
+with a 6\% prior, worsening the class imbalance without improving practical
+performance. We therefore restrict the canonical action space to
+\{128, 256, 512\}.
+
+\input{rag-chunk-routing/results/figures/table_action_space_ablation}
 
 \section{Conclusion}
 
-Summarise what you did, what you found, and what the limitations are.
-Optionally, suggest directions for future work.
+We asked whether a cheap, query-only classifier can recover the per-question
+chunk-size oracle gap in a medical RAG system. The answer, on this corpus
+and setup, is no. The trained router (MiniLM sentence embeddings + logistic
+regression, selected by end-to-end validation RAG~F1) scores F1\,=\,0.171
+on the test split, 0.042 F1 points below the best fixed-size baseline and
+well below the oracle ceiling of 0.295.
 
-\section*{References}
+A parameter-free type-aware heuristic achieves F1\,=\,0.229 (+0.20 gap
+closure) by routing factoid questions to size~128, multihop to size~256, and
+synthesis to size~512 --- with no training whatsoever.
+This result cleanly identifies the limits of the routing approach on this
+dataset: question type is the only reliable routing signal, and any
+additional feature information is noise.
 
-\small
+RRF multi-scale fusion achieves F1\,=\,0.223 (+0.13 gap closure) at roughly
+44\% higher retrieval cost. In absolute terms, fusion and the type-aware
+heuristic perform comparably; the type heuristic has the advantage of
+requiring no infrastructure change, while fusion has the advantage of
+requiring no type labels at query time.
 
-% Use any consistent citation style.
-% Example:
-%
-% [1] Author, A. \& Author, B. (Year). Title. \textit{Venue}.
+\paragraph{Limitations.}
+Our training set (237 examples) is small, and the 82\% majority class
+severely limits the learning signal for minority types.
+The oracle gap itself is modest overall (+8.19 pts), with the headroom
+concentrated in factoid questions; multihop and synthesis contribute little
+even to the oracle, reflecting generation-quality limitations more than
+chunking choices.
+Results are on a single corpus and domain; generalisability to other
+settings is not established.
+
+\paragraph{Future directions.}
+Larger labelled datasets, retrieval-aware features (e.g.\ predicted
+retrieval score under each candidate chunk size), and per-type action-space
+selection are natural next steps.
+Cross-encoder rerankers or query-adaptive overlap could also be explored
+as intermediate points on the cost--accuracy curve.
+
+\begin{thebibliography}{10}
+
+\bibitem{lewis2020rag}
+Lewis, P., Perez, E., Piktus, A., et al.\ (2020).
+Retrieval-Augmented Generation for Knowledge-Intensive NLP Tasks.
+\textit{Advances in Neural Information Processing Systems (NeurIPS)~33}.
+
+\bibitem{cormack2009rrf}
+Cormack, G.\,V., Clarke, C.\,L.\,A., \& Buettcher, S.\ (2009).
+Reciprocal Rank Fusion Outperforms Condorcet and Individual Rank Learning Methods.
+\textit{Proceedings of SIGIR~2009}, 758--759.
+
+\bibitem{reimers2019sbert}
+Reimers, N., \& Gurevych, I.\ (2019).
+Sentence-BERT: Sentence Embeddings using Siamese BERT-Networks.
+\textit{Proceedings of EMNLP~2019}.
+
+\bibitem{bge2023}
+Xiao, S., Liu, Z., Zhang, P., \& Muennighoff, N.\ (2023).
+C-Pack: Packaged Resources to Advance General Chinese Embedding.
+\textit{arXiv:2309.07597}.
+
+\bibitem{johnson2019faiss}
+Johnson, J., Douze, M., \& J\'{e}gou, H.\ (2019).
+Billion-Scale Similarity Search with GPUs.
+\textit{IEEE Transactions on Big Data~7}(3), 535--547.
+
+\bibitem{qwen2025}
+Qwen Team (2025).
+Qwen2.5 Technical Report.
+\textit{arXiv:2412.15115}.
+
+\bibitem{ke2017lightgbm}
+Ke, G., Meng, Q., Finley, T., et al.\ (2017).
+LightGBM: A Highly Efficient Gradient Boosting Decision Tree.
+\textit{Advances in Neural Information Processing Systems (NeurIPS)~30}.
+
+\bibitem{pedregosa2011sklearn}
+Pedregosa, F., Varoquaux, G., Gramfort, A., et al.\ (2011).
+Scikit-learn: Machine Learning in Python.
+\textit{Journal of Machine Learning Research~12}, 2825--2830.
+
+\bibitem{asai2023selfrag}
+Asai, A., Wu, Z., Wang, Y., Sil, A., \& Hajishirzi, H.\ (2023).
+Self-RAG: Learning to Retrieve, Generate, and Critique through Self-Reflection.
+\textit{arXiv:2310.11511}.
+
+\bibitem{shi2024large}
+Shi, W., Min, S., Yasunaga, M., et al.\ (2024).
+REPLUG: Retrieval-Augmented Black-Box Language Models.
+\textit{Proceedings of NAACL~2024}.
+
+\end{thebibliography}
 
 \appendix
 
 \section{Additional Results and Implementation Details}
 
-Put here any supplementary figures, tables, proofs, or extended
-experimental details that did not fit in the main paper.
-The appendix has no page limit.
+\subsection{Extended Baselines Including Chunk Size 1024}
+
+Table~\ref{tab:extended-baselines} reports all four chunk sizes for
+completeness.
+
+\input{rag-chunk-routing/results/figures/table_extended_baselines}
+
+\subsection{Reproducibility}
+
+\input{rag-chunk-routing/results/figures/table_reproducibility}
+
+\subsection{Implementation Details}
+
+\paragraph{Hardware.}
+All GPU-dependent experiments (oracle scoring, fusion, router evaluation)
+were run on an NVIDIA A100~GPU via the Bocconi HPC cluster (SLURM,
+\texttt{partition=stud}).
+
+\paragraph{Generation.}
+Qwen2.5-7B-Instruct, served via vLLM with
+\texttt{VLLM\_WORKER\_MULTIPROC\_METHOD=spawn}.
+Answer generation uses a fixed prompt
+(\texttt{prompts/answer.txt}); temperature = 0.0 for reproducibility.
+
+\paragraph{Embeddings.}
+BAAI/BGE-small-en-v1.5, batch size 64, L2-normalised embeddings,
+on CPU (embeddings are computed once and persisted as FAISS indices).
+
+\paragraph{Router training.}
+5-fold stratified cross-validation; class-balanced weights throughout.
+TF-IDF fitted inside each fold to prevent vocabulary leakage.
+MiniLM embeddings frozen (no fine-tuning).
+Two-pass selection: top-3 by val macro-F1, re-ranked by val RAG~F1.
+
+\paragraph{Seeds.}
+Python/NumPy/PyTorch seeded with 42 throughout.
+Split stratification uses the same seed.
 
 \end{document}
