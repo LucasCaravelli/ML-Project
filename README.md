@@ -22,13 +22,15 @@ per unit retrieval cost. Everything else is supporting evidence.
 Three things about the structure are worth internalizing before anyone starts
 writing code, because they will save us from avoidable arguments later.
 
-**Three data tiers, strictly separated.** `data/` holds the raw corpus and is
-never written to. `artifacts/` holds everything derived from the corpus plus
-code (chunks, indices, QA pairs, oracle labels) and can be wiped and rebuilt
-at any time. `results/` holds timestamped run outputs and is never overwritten
-in place. If your change breaks chunking, you delete artifacts and rebuild; 
-the QA we manually validated and the results we have already committed survive 
-untouched.
+**Three data tiers, strictly separated.** `data/` holds the raw corpus
+(`data/corpus.txt`) and is never written to. `artifacts/` holds everything
+derived from the corpus plus code (chunks, indices, QA pairs, oracle labels,
+trained router) and can be wiped and rebuilt at any time. `results/` holds
+timestamped run outputs and is never overwritten in place. If your change breaks
+chunking, you delete artifacts and rebuild; the QA we manually validated and the
+results we have already committed survive untouched. See "Data, pre-built
+artifacts, and prompts" for the full listing of every committed file in
+`artifacts/`.
 
 **Package code in `rag_cr/`, orchestration in `experiments/`.** The package
 contains reusable logic behind frozen interfaces. The experiment scripts are
@@ -486,8 +488,10 @@ someone else's interface later in the project.
 | File | Purpose |
 | --- | --- |
 | `neurips_2026.tex` | NeurIPS 2026 paper template. Currently contains: fixed-size baselines + oracle table, full **Chunk-Size Router** subsection (feature extractors, two-pass selection, test results, type-aware baseline paragraph, per-type figure, analysis), and placeholder sections for Introduction / Method / Conclusion. |
+| `neurips_2026.sty` | Official NeurIPS 2026 style file. Required by `neurips_2026.tex`; do not modify. |
 | `REPORT_GUIDE.md` | Guide for report writers. Explains the repository layout, the three-tier data philosophy, which artifact files map to which figures, and how to reproduce every number in the paper. **Start here if you are writing the report.** |
 | `LitReview.tex` | Literature review document. |
+| `ML Primary Lit/` | PDF copies of the primary reference papers (RAG original, dense-passage retrieval, etc.). Not consumed by any script. |
 
 ### Committed figures and LaTeX tables (`results/figures/`)
 
@@ -590,12 +594,115 @@ All cluster jobs use `account=3404007`, `partition=stud`, `qos=stud`. Logs go to
 | Script | Job | GPU | Time | Notes |
 | --- | --- | --- | --- | --- |
 | `slurm/build_indices.slurm` | Build FAISS indices | No | 30 min | Uses `base.yaml` (CPU embeddings). Run once before any eval job. |
+| `slurm/oracle_test.slurm` | Oracle eval — test split | Yes (1×A100) | 45 min | Runs `compute_oracle --splits test` then `run_baselines`. Produces the headline test numbers. |
+| `slurm/oracle_full.slurm` | Oracle eval — train+val | Yes (1×A100) | 45 min | Runs `compute_oracle --splits train,val` then `run_baselines`. Appends rows to the existing `eval_grid.jsonl`; test rows from `oracle_test.slurm` are preserved. |
 | `slurm/fusion.slurm` | RRF fusion eval | Yes (1×A100) | 45 min | Uses `cluster.yaml` (vLLM + Qwen2.5-7B). |
+
+Recommended submission order:
 
 ```bash
 sbatch slurm/build_indices.slurm   # once, CPU-only
-sbatch slurm/fusion.slurm          # after indices exist
+sbatch slurm/oracle_test.slurm     # test split oracle + baselines
+sbatch slurm/oracle_full.slurm     # train/val oracle (appends to same eval_grid)
+sbatch slurm/fusion.slurm          # after indices and oracle exist
 ```
+
+---
+
+## Data, pre-built artifacts, and prompts
+
+### Corpus: `data/corpus.txt`
+
+The raw text corpus. Plain UTF-8, one document per line. Never written to by any
+script — all derived data goes to `artifacts/`. If you change this file, delete
+`artifacts/chunks/`, `artifacts/indices/`, and `artifacts/oracle/` and rebuild
+with `make all`. The corpus is small enough to commit directly; do not gitignore it.
+
+### Pre-built artifacts
+
+All files under `artifacts/` are committed so the project is immediately runnable
+without a GPU. They can be wiped with `make clean-artifacts` and rebuilt from
+`make all`.
+
+**Chunks** (`artifacts/chunks/`)
+
+| File | Contents |
+| --- | --- |
+| `128.jsonl` | All chunks of width 128 tokens, with `chunk_id`, `text`, `doc_id`, `token_count`. |
+| `256.jsonl` | Same, width 256. |
+| `512.jsonl` | Same, width 512. |
+| `1024.jsonl` | Same, width 1024 (retired from action space; kept for the ablation). |
+
+**FAISS indices** (`artifacts/indices/`)
+
+| File | Contents |
+| --- | --- |
+| `128.faiss` | Flat L2 FAISS index of BGE-small embeddings for 128-token chunks. |
+| `256.faiss` | Same for 256-token chunks. |
+| `512.faiss` | Same for 512-token chunks. |
+| `1024.faiss` | Same for 1024-token chunks (retained for ablation reproducibility). |
+
+**Oracle** (`artifacts/oracle/`)
+
+| File | Contents |
+| --- | --- |
+| `eval_grid.jsonl` | One row per `(qa_id, chunk_size)` cell: `qa_id`, `split`, `type`, `chunk_size`, `f1`, `em`, `faithfulness`. 398 questions × 4 sizes = 1 592 rows. The authoritative source for all downstream aggregation. |
+| `labels.jsonl` | Oracle label per question under the 3-size action space: best `chunk_size` by F1 (tiebreak EM then smaller size), plus `oracle_f1`, `oracle_em`. |
+| `labels_full.jsonl` | Same under the full 4-size action space (ablation). |
+
+**Baselines** (`artifacts/baselines/`)
+
+| File | Contents |
+| --- | --- |
+| `oracle_gap.json` | Canonical oracle-gap summary: `best_baseline_f1`, `oracle_f1_mean`, per-type breakdowns. Used by `make_router_figures.py` and `make_frontier.py`. |
+| `oracle_gap_full.json` | Same for the full 4-size action space. |
+| `test_summary.json` | Per-size mean F1/EM/faithfulness on the test split, 3-size action space. |
+| `test_summary_full.json` | Same, 4-size action space. |
+| `size_distribution.json` | Oracle-best-size distribution per split, 3-size action space. |
+| `size_distribution_full.json` | Same, 4-size. |
+
+**QA** (`artifacts/qa/`)
+
+See "QA generation, filtering, and validation" section above for the full schema.
+`qa_validated.jsonl` (398 rows) is the only file read by downstream scripts.
+`qa_rejected.jsonl` is a sidecar audit log; `qa_raw.jsonl` is empty once all
+pending pairs have been reviewed.
+
+**Splits** (`artifacts/splits/`)
+
+| File | Contents |
+| --- | --- |
+| `train.jsonl` / `val.jsonl` / `test.jsonl` | Stratified splits of `qa_validated.jsonl` (237 / 77 / 84 rows). Schema: full `QAPair` plus `split` field. |
+| `manifest.json` | Split metadata: counts per split/type, SHA256 of the source `qa_validated.jsonl`, and a `note` field explaining the 398-not-400 dedup. |
+
+**Router** (`artifacts/router/`)
+
+Produced by `make router` / `experiments/train_router.py`. Committed so that
+`run_router.py` can be run without repeating the GPU-intensive training.
+
+| File | Contents |
+| --- | --- |
+| `best.pkl` | Pickle of the winning `(FeatureExtractor, RouterModel)` pair, fitted on the full training set. Loaded by `run_router.py` and `RouterSystem`. |
+| `best_config.json` | Human-readable record of the winning configuration: feature set, classifier name, val macro-F1, val RAG F1 from the two-pass selection procedure. |
+| `cv_results.csv` | Full 3×3 CV grid results table (one row per `(feature_set, classifier)` pair): mean val macro-F1 across 5 folds, std, then val RAG F1 from the re-ranking pass. Used for Table 3 in the report. |
+
+### Prompts: `prompts/`
+
+Template files used by the OpenAI-backed generation and judging steps.
+
+| File | Used by | Purpose |
+| --- | --- | --- |
+| `qa_generation_factoid.txt` | `generate_qa.py` | System + user prompt for generating factoid QA pairs from a chunk. |
+| `qa_generation_multihop.txt` | `generate_qa.py` | Prompt for multihop questions requiring multiple chunks. |
+| `qa_generation_synthesis.txt` | `generate_qa.py` | Prompt for synthesis questions requiring the whole document context. |
+| `qa_answer.txt` | `filter_qa.py` | Prompt for the primary-only F1 re-answering step (multihop/synthesis check). |
+| `judge.txt` | `filter_qa.py` | System + user prompt for the LLM judge that decides keep/drop on each QA pair. |
+| `answer.txt` | `generation.py` (pipeline) | Prompt used at evaluation time: given retrieved chunks + question, produce the answer. |
+
+All prompts use `{variable}` placeholders. The scripts load them via
+`rag_cr.io` and substitute at call time. **Do not edit prompt files without
+re-running the affected pipeline stage**, as output format changes can break
+downstream JSON parsing.
 
 ---
 
@@ -616,6 +723,15 @@ Torch-dependent tests (`test_chunking`, `test_retrieval`, `test_router`, `test_q
 | `configs/base.yaml` | Canonical config for local runs. Generation backend: `ollama`. Action space: `{128, 256, 512}`. |
 | `configs/cluster.yaml` | Cluster override. Swaps backend to `vllm` + Qwen/Qwen2.5-7B-Instruct. All other values identical to `base.yaml`. |
 | `configs/eval_dry_run.yaml` | Offline/CI config. Backend: `extractive` (no GPU, no external server). Includes all 4 chunk sizes so integration tests cover the full grid without vLLM. |
+
+### Package configuration: `pyproject.toml`
+
+`pyproject.toml` is the single source of truth for the package. Key sections:
+
+- **`[project]`** — name (`rag-chunk-routing`), version, `requires-python = ">=3.11"`, and the core dependency list with version ranges compatible with the cluster `ragcr` conda environment.
+- **`[project.optional-dependencies]`** — `dev` extras (pytest, ruff, black) and `cluster` extras (`vllm>=0.6,<1`). Install with `pip install -e ".[dev]"` locally or `pip install -e ".[cluster]"` on the cluster.
+- **`[tool.ruff]`** — line length 100, Python 3.11 target, rules E/F/I/UP/B. `make_figures.py` and `make_frontier.py` are exempted from E501 because they contain intentionally wide LaTeX format strings.
+- **`[tool.pytest.ini_options]`** — `testpaths = ["tests"]`, `addopts = "-ra"`, and the two custom markers (`slow`, `integration`).
 
 ### Dependency management
 
@@ -716,6 +832,9 @@ Selected model: **MiniLM + logistic regression** (val macro-F1 = 0.416, val RAG 
 
 | Path | Contents |
 | --- | --- |
+| `artifacts/router/best.pkl` | Winning `(FeatureExtractor, RouterModel)` pickle, fitted on full train set |
+| `artifacts/router/best_config.json` | Selected configuration: feature set, classifier, val macro-F1, val RAG F1 |
+| `artifacts/router/cv_results.csv` | Full 3×3 CV grid results (macro-F1 per fold, val RAG F1) |
 | `results/figures/fig_router_comparison.{pdf,png}` | Bar chart comparing all four systems |
 | `results/figures/fig_router_per_type.{pdf,png}` | Per-type F1 breakdown (factoid / multihop / synthesis) |
 | `results/figures/table_router_results.tex` | LaTeX table with router, type-aware, baseline, and oracle rows |
@@ -746,6 +865,17 @@ Run with `make test` (alias for `pytest` from `rag-chunk-routing/`).
 | `test_utils.py` | Shared utilities (gap closure, oracle gap reader) | ~10 |
 | **Total** | | **≈ 167** |
 
+### Shared fixtures: `tests/conftest.py`
+
+`conftest.py` is loaded automatically by pytest before any test file. It adds the
+repo root to `sys.path` (so imports like `from rag_cr.metrics import ...` work
+without an editable install) and provides two session-scoped fixtures available to
+every test file:
+
+- `project_root` — `Path` pointing to the `rag-chunk-routing/` directory.
+- `sample_corpus_text` — a short deterministic string used by unit tests that need
+  a corpus without touching the real `data/corpus.txt`.
+
 ### Markers
 
 - `integration` — requires built artifacts on disk (e.g. `test_retrieval.py` needs `artifacts/indices/` from `make indices`). Skip with `pytest -m "not integration"`.
@@ -754,3 +884,36 @@ Run with `make test` (alias for `pytest` from `rag-chunk-routing/`).
 ### What is not tested
 
 Thin wrappers (`logging`, `seed`, `tokens`, `types`) and backends that require external services (`generation`, `embedding`, `indexing`, `pipeline`) have no unit tests. Experiment scripts in `experiments/` are not unit-tested; they are exercised end-to-end via the `make` pipeline. `qa_gen` and `qa_filter` are tested with the LLM call monkeypatched.
+
+---
+
+## Experiment scripts master table (`experiments/`)
+
+Every script in `experiments/` is a thin CLI wrapper around library code in
+`rag_cr/`. All accept `--config <path>` and write outputs to `artifacts/` or
+`results/runs/<timestamp>_<tag>/`. Run via the `Makefile` targets shown below
+rather than invoking directly when dependencies matter.
+
+### Pipeline (build order)
+
+| Script | `make` target | Needs GPU | Output |
+| --- | --- | --- | --- |
+| `build_indices.py` | `make indices` | No | `artifacts/chunks/*.jsonl`, `artifacts/indices/*.faiss` |
+| `generate_qa.py` | `make qa-generate` | No (OpenAI API) | `artifacts/qa/qa_raw.jsonl` (appends) |
+| `filter_qa.py` | `make qa-filter` | No (OpenAI API) | `artifacts/qa/qa_validated.jsonl`, `qa_rejected.jsonl` |
+| `validate_qa.py` | `make qa-validate` | No | Edits `qa_validated.jsonl` in place |
+| `make_splits.py` | (called by `oracle`) | No | `artifacts/splits/{train,val,test}.jsonl`, `manifest.json` |
+| `compute_oracle.py` | `make oracle` | Yes (vLLM) | `artifacts/oracle/eval_grid.jsonl`, `labels.jsonl` |
+
+### Evaluation and analysis
+
+| Script | `make` target | Needs GPU | Output |
+| --- | --- | --- | --- |
+| `run_baselines.py` | `make baselines` | No | `artifacts/baselines/oracle_gap.json`, `test_summary.json`, etc. |
+| `run_fusion.py` | `make fusion` | Yes (vLLM) | `results/runs/<ts>_fusion/metrics.json` |
+| `train_router.py` | `make router` | Yes (MiniLM + vLLM) | `artifacts/router/best.pkl`, `best_config.json`, `cv_results.csv` |
+| `run_router.py` | `make router` | Yes (vLLM) | `results/runs/<ts>_router/metrics.json`, `predictions.jsonl` |
+| `run_type_router.py` | `make router` | No | `results/runs/<ts>_type_router/metrics.json`, `predictions.jsonl` |
+| `make_figures.py` | `make figures` | No | `results/figures/table_*.tex`, `fig_*.{pdf,png}` |
+| `make_router_figures.py` | `make router` | No | `results/figures/fig_router_*.{pdf,png}` |
+| `make_frontier.py` | `make frontier` | No | `results/figures/frontier.{pdf,png}`, `results/runs/SUMMARY.md` |
