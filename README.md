@@ -508,6 +508,61 @@ someone else's interface later in the project.
 
 ---
 
+## System abstractions: `rag_cr/systems.py`
+
+All evaluation scripts go through a common `System` protocol so the pipeline
+loop is identical regardless of which system is under evaluation.
+
+| Class | Description |
+| --- | --- |
+| `FixedSizeSystem(size, config)` | Retrieves from the single FAISS index for the given chunk size. |
+| `FusionSystem(config)` | Retrieves from all three indices and merges via RRF. |
+| `OracleSystem(config)` | Looks up the oracle-best chunk size per question from `labels.jsonl`, then delegates to `FixedSizeSystem`. |
+| `RouterSystem(pkl_path, config)` | Loads the trained router pickle, predicts a chunk size from the question text and type, then delegates to `FixedSizeSystem`. |
+
+`get_system(name, config)` returns the right instance by name string (`"fusion"`, `"oracle"`, `"router"`, or a raw integer size). This is what `pipeline.run()` and `make_frontier.py` call internally.
+
+---
+
+## Frontier figure: `make_frontier.py`
+
+The frontier is the headline output of the project. It plots every system on an
+**accuracy–cost plane** (mean F1 on the y-axis vs. mean tokens per query on the
+x-axis) and computes the gap-recovery-per-cost efficiency metric.
+
+### Headline metric
+
+```
+gap_recovery_per_cost = (sys_F1 − best_baseline_F1)
+                      / (oracle_F1 − best_baseline_F1)
+                      / mean_cost_tokens_per_query
+```
+
+This is the number reported in the report's introduction: how much oracle gap does
+a system recover per token of retrieval cost?
+
+### Data sources (priority order)
+
+For each system, `make_frontier.py` looks for the most recent run in
+`results/runs/` and falls back to pre-computed artifacts if no run exists:
+
+- **Fixed baselines** — `results/runs/<ts>_fixed_<size>/metrics.json`, falling
+  back to `artifacts/baselines/test_summary.json` + `eval_grid.jsonl` for token costs.
+- **Oracle** — `artifacts/baselines/oracle_gap.json` (F1) + `eval_grid.jsonl`
+  (cost per question at its oracle-best size).
+- **Fusion, Router** — `results/runs/<ts>_fusion/` and `<ts>_router/`
+  respectively. Missing systems are skipped with a warning.
+
+### Outputs
+
+- `results/figures/frontier.{pdf,png}` — the accuracy–cost scatter plot.
+- `results/runs/SUMMARY.md` — markdown table of all systems with F1, EM, token cost,
+  and gap-recovery-per-cost, ready to paste into the report.
+
+Run as part of `make frontier` (depends on `baselines`, `fusion`, `router`).
+
+---
+
 ## Fusion track: what was built
 
 The RRF fusion baseline retrieves from all three chunk-size indices simultaneously
@@ -527,14 +582,19 @@ test split. Prints a sanity check comparing fusion F1 against the best fixed-siz
 baseline and the oracle. Writes to `results/runs/<ts>_fusion/metrics.json`.
 Runs as part of `make fusion` (depends on `oracle`).
 
-### SLURM: `slurm/fusion.slurm`
+### SLURM scripts (`slurm/`)
 
-Submits the fusion eval to the Bocconi A100 cluster (45-min job, 1 GPU, 32 GB RAM).
-Uses `configs/cluster.yaml` so the backend is vLLM + Qwen/Qwen2.5-7B-Instruct,
-keeping the comparison apples-to-apples with the oracle and baselines.
+All cluster jobs use `account=3404007`, `partition=stud`, `qos=stud`. Logs go to
+`logs/%x_%j.{out,err}` — create the `logs/` directory before submitting.
+
+| Script | Job | GPU | Time | Notes |
+| --- | --- | --- | --- | --- |
+| `slurm/build_indices.slurm` | Build FAISS indices | No | 30 min | Uses `base.yaml` (CPU embeddings). Run once before any eval job. |
+| `slurm/fusion.slurm` | RRF fusion eval | Yes (1×A100) | 45 min | Uses `cluster.yaml` (vLLM + Qwen2.5-7B). |
 
 ```bash
-sbatch slurm/fusion.slurm
+sbatch slurm/build_indices.slurm   # once, CPU-only
+sbatch slurm/fusion.slurm          # after indices exist
 ```
 
 ---
