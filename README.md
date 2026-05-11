@@ -512,6 +512,238 @@ someone else's interface later in the project.
 
 ---
 
+## Library modules: `rag_cr/`
+
+All reusable logic lives here behind frozen interfaces. No CLI entry points — those
+are in `experiments/`. The internal `rag_cr/README.md` has a one-line summary per
+module; this section gives the full picture.
+
+### Configuration and infrastructure
+
+**`config.py`** — frozen dataclasses loaded from YAML via `load_config(path)`.
+The root object is `Config`; sub-configs are:
+
+| Dataclass | Fields | Purpose |
+| --- | --- | --- |
+| `PathsConfig` | `corpus`, `artifacts_dir`, `results_dir` | Canonical path roots. All scripts derive sub-paths from these. |
+| `ChunkingConfig` | `sizes: list[int]`, `overlaps: dict[int,int]` | Active action space and per-size overlap. 1024 is in `overlaps` but not `sizes`. |
+| `EmbeddingConfig` | `model_name`, `device`, `batch_size`, `normalize` | BGE-small embedding settings. |
+| `RetrievalConfig` | `top_k`, `fusion_constant`, `top_k_by_size` | `k_for_size(size)` returns per-size top-k override or falls back to `top_k`. |
+| `SplitsConfig` | `ratios`, `stratify_by` | Train/val/test split ratios and stratification key (`type`). |
+| `GenerationConfig` | `backend`, `model_name`, `max_new_tokens`, `temperature` | Backend is one of `ollama`, `vllm`, `extractive`. |
+| `QAConfig` | `target_count`, `type_distribution`, `generation.models`, etc. | QA generation hyperparameters, per-type model overrides, filter thresholds. |
+
+**`io.py`** — JSONL/JSON helpers and path resolution. Every script uses these
+instead of calling `open()` directly, so encoding and parent-dir creation are
+handled uniformly.
+
+| Function | What it does |
+| --- | --- |
+| `read_jsonl(path)` / `write_jsonl(path, rows)` | Read/write a list of dicts as newline-delimited JSON. `read_jsonl` raises `ValueError` on malformed lines. |
+| `read_json(path)` / `write_json(path, data)` | Load/save a single JSON object. |
+| `read_text(path)` / `write_text(path, content)` | UTF-8 text files. |
+| `ensure_dir(path)` | `mkdir -p`; returns resolved `Path`. |
+| `timestamp()` | Returns `YYYYMMDD_HHMMSS` string used in run-dir names. |
+| `create_run_dir(results_dir, system_name)` | Creates and returns `results/runs/<timestamp>_<system_name>/`. |
+| `get_chunks_path(artifacts_dir, size)` | → `artifacts/chunks/<size>.jsonl` |
+| `get_index_path(artifacts_dir, size)` | → `artifacts/indices/<size>.faiss` |
+| `get_qa_validated_path(artifacts_dir)` | → `artifacts/qa/qa_validated.jsonl` |
+| `get_qa_raw_path` / `get_qa_rejected_path` | Same pattern for the other QA files. |
+
+**`types.py`** — shared `TypedDict`s. Used as the canonical schema everywhere.
+
+| Type | Key fields | Used for |
+| --- | --- | --- |
+| `Chunk` | `chunk_id`, `size`, `start_char`, `end_char`, `text` | One chunked passage. |
+| `RetrievedChunk` | `chunk_id`, `text`, `score`, `source_size` | One retrieval hit with its relevance score. |
+| `QAPair` | `qa_id`, `question`, `answer`, `source_chunk_id`, `type`, `validated` | One question–answer pair. |
+| `OracleLabel` | `qa_id`, `best_size`, `scores_by_size: dict[int, float]` | Per-question oracle label. |
+| `ScoreDict` | `em`, `f1`, `faithfulness`, `cost_tokens` | Evaluation scores for one prediction. |
+
+**`tokens.py`** — `count_tokens(text) -> int` via whitespace splitting. Used by
+`metrics.py` to count retrieval cost (tokens in retrieved passages) and by
+`chunking.py` to enforce chunk-size targets.
+
+**`logging.py`** — `get_logger(name)` returns a project-wide logger with consistent
+`%(levelname)s | %(name)s | %(message)s` formatting. All experiment scripts call
+this instead of `print` for progress messages.
+
+**`seed.py`** — `set_seed(n)` seeds Python's `random`, NumPy, and PyTorch
+(including CUDA if available). Called once at the top of every experiment script
+to ensure reproducible index shuffling and CV splits.
+
+**`utils.py`** — shared computations used by multiple experiment scripts:
+
+| Function | Signature | What it does |
+| --- | --- | --- |
+| `git_hash()` | `() -> str` | Returns current HEAD commit hash, or `"unknown"` on failure. Written to `meta.json` in every run. |
+| `read_oracle_gap(artifacts_dir)` | `(Path) -> (float\|None, float\|None)` | Returns `(oracle_f1_mean, best_baseline_f1)` from `oracle_gap.json`. |
+| `gap_closure(router_f1, baseline_f1, oracle_f1)` | `(float, float\|None, float\|None) -> float\|None` | `(router - baseline) / (oracle - baseline)`. Returns `None` if references missing or denominator ≈ 0. |
+
+### Corpus → index → retrieval
+
+**`corpus.py`** — `load_corpus(path)` reads `data/corpus.txt` and returns a list
+of document strings. Accessor helpers (`get_doc_id(chunk_id)`, etc.) parse the
+`<docid>_<offset>` chunk ID convention used throughout.
+
+**`chunking.py`** — `chunk_corpus(corpus, size, overlap)`. Tokenizer-aware: splits
+on whitespace tokens, enforces `size` as a hard token ceiling, and slides with
+`overlap` tokens of context carry-over. Deterministic for a given seed. Output
+rows match the `Chunk` TypedDict and are written to `artifacts/chunks/<size>.jsonl`
+by `build_indices.py`.
+
+**`embedding.py`** — `embed_texts(texts, model_name, device, batch_size, normalize)`
+using `sentence-transformers`. BGE-small (`BAAI/bge-small-en-v1.5`) is the default.
+A module-level model cache means the model is loaded once per process, not once per
+call.
+
+**`indexing.py`** — FAISS flat L2 index operations:
+- `build_index(embeddings)` — build from a numpy matrix.
+- `save_index(index, path)` / `load_index(path)` — persist to / load from `.faiss`.
+- `search_index(index, query_vec, k)` — return top-k distances and indices.
+
+**`retrieval.py`** — `Retriever` class. Loads all configured per-size indices once
+on first use and keeps them in memory. Single public method:
+
+```python
+retriever.retrieve(query: str, chunk_size: int | "fusion") -> list[RetrievedChunk]
+```
+
+`chunk_size="fusion"` calls all indices and merges via `fusion.rrf_fuse`. Any
+integer calls the corresponding single-scale index.
+
+**`fusion.py`** — see [Fusion track](#fusion-track-what-was-built) section above.
+
+### QA generation and evaluation
+
+**`qa_gen.py`** — `QAGenerator` class. Calls the OpenAI API with type-stratified
+prompts from `prompts/qa_generation_*.txt`. Key behaviors:
+- Computes per-type deficits against `qa.target_count`.
+- Collision-skipping ID allocator: reads all existing `qa_id`s from disk and
+  skips any that are already taken before assigning new ones (fixes the 398-not-400 bug).
+- Incremental append to `qa_raw.jsonl` so interrupted runs resume cleanly.
+- `--force` flag overwrites `qa_raw.jsonl` from scratch.
+
+**`qa_filter.py`** — `filter_pending(qa_raw_path, config)`. Two-stage filter:
+1. Primary-only F1 check (multihop/synthesis only): re-asks with only the primary
+   chunk; drops pairs where the answer is reachable without neighbors.
+2. LLM judge via `prompts/judge.txt`: returns `keep` or `drop` with a reason.
+
+Passing pairs are appended to `qa_validated.jsonl`; rejected pairs go to
+`qa_rejected.jsonl`.
+
+**`splits.py`** — `make_splits(qa_pairs, ratios, stratify_by, seed)`. Largest-
+remainder stratified split: counts sum exactly to the input size, and the type
+distribution is preserved within each split. Returns a dict
+`{split_name: list[QAPair]}`.
+
+**`generation.py`** — answer-generation backends, selected by
+`config.generation.backend`:
+- `ollama` — local Ollama server (default for laptop runs).
+- `vllm` — vLLM HTTP server (used on cluster). Requires `pip install -e ".[cluster]"`.
+- `extractive` — returns the first sentence of the top retrieved chunk verbatim, no
+  model required. Used by CI and offline unit tests.
+
+**`metrics.py`** — deterministic evaluation, no LLM involved:
+- `token_f1(prediction, gold)` — bag-of-words token overlap F1 after lowercasing and
+  punctuation removal.
+- `score(prediction, gold, passages)` → `ScoreDict` with `em`, `f1`, `faithfulness`,
+  and `cost_tokens` (total tokens across retrieved passages).
+- Faithfulness: fraction of unique prediction tokens that appear in the retrieved
+  passages (proxy for hallucination rate).
+
+**`oracle.py`** — `label_from_grid(grid_rows)` → `list[OracleLabel]`. Groups
+eval-grid rows by `qa_id`, then selects the winning chunk size using the tiebreak
+order: highest F1, then highest EM, then smallest chunk size. This is the
+authoritative oracle-label function; all per-question oracle-best sizes come from here.
+
+**`pipeline.py`** — `run(system_name, qa_path, config, limit)`. Orchestrates the
+full retrieve→generate→score loop for one system over a QA set. Calls
+`build_system(system_name, config)`, iterates over QA pairs, scores each prediction,
+and writes `metrics.json` + `predictions.jsonl` to a timestamped run directory.
+
+**`systems.py`** — see [System abstractions](#system-abstractions-rag_crsystemspy)
+section above.
+
+**`router/`** — see [Router track: library modules](#library-modules-rag_crrouter)
+section above.
+
+---
+
+## `results/runs/` directory schema
+
+Every evaluation script writes its outputs to a timestamped directory under
+`results/runs/`. The directory name encodes the timestamp and system tag:
+
+```
+results/runs/<YYYYMMDD_HHMMSS>_<system_tag>/
+```
+
+| System tag | Created by | GPU |
+| --- | --- | --- |
+| `router` | `run_router.py` | Yes |
+| `type_router` | `run_type_router.py` | No |
+| `fusion` | `run_fusion.py` | Yes |
+| `fixed_<size>` | `run_baselines.py` (when run in eval mode) | Yes |
+
+### Files in every run directory
+
+**`meta.json`** — written by every script except `run_type_router.py`:
+
+```json
+{
+  "git_hash": "abc123...",
+  "config_path": "configs/cluster.yaml",
+  "seed": 42,
+  "system": "router",
+  "timestamp": "20260502_010445"
+}
+```
+
+**`metrics.json`** — aggregate metrics for the run. Core fields present in all runs:
+
+| Field | Type | Description |
+| --- | --- | --- |
+| `mean_f1` | float | Mean token-overlap F1 across all scored questions |
+| `mean_em` | float | Mean exact match |
+| `mean_faithfulness` | float | Mean faithfulness score |
+| `mean_cost_tokens` | int | Mean tokens in retrieved passages per query |
+| `n_test_examples` | int | Number of questions evaluated |
+| `gap_closure_fraction` | float\|null | (system F1 − best baseline) / (oracle − best baseline) |
+
+Additional fields in router/type_router runs:
+
+| Field | Type | Description |
+| --- | --- | --- |
+| `policy` | str | `"type_aware"` (type_router) or `"router"` |
+| `type_best_sizes` | dict | Per-type winning chunk size, e.g. `{"factoid": 128, ...}` |
+
+**`predictions.jsonl`** — one row per question. Core fields:
+
+| Field | Type | Description |
+| --- | --- | --- |
+| `qa_id` | str | Question identifier |
+| `question` | str | The question text |
+| `gold` | str | Gold-standard answer |
+| `predicted_answer` | str | Model-generated answer |
+| `f1` | float | Token-overlap F1 for this question |
+| `em` | float | Exact match for this question |
+| `faithfulness` | float | Faithfulness score for this question |
+| `cost_tokens` | int | Tokens in retrieved passages |
+
+Router runs additionally include:
+
+| Field | Type | Description |
+| --- | --- | --- |
+| `predicted_chunk_size` | int | Chunk size selected for this question |
+| `question_type` | str | `factoid`, `multihop`, or `synthesis` |
+
+The most recent run for each tag is picked up automatically by `make_frontier.py`
+and `make_router_figures.py` using the `_latest(results_dir, tag, filename)` helper
+(with `_RUN_RE` regex guard to prevent `*_router` matching `*_type_router`).
+
+---
+
 ## System abstractions: `rag_cr/systems.py`
 
 All evaluation scripts go through a common `System` protocol so the pipeline
