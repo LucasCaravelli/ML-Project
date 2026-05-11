@@ -478,3 +478,133 @@ construction.
 Ask on Whatsapp rather than branching away on your own. The cost of a fifteen-
 minute clarifying conversation is much lower than the cost of rewriting
 someone else's interface later in the project.
+
+---
+
+## Completed experiments and final results
+
+All numbers below are on the **test split (n = 84)**, action space {128, 256, 512},
+evaluated with Qwen/Qwen2.5-7B-Instruct on an A100 GPU (vLLM backend).
+Sources: `artifacts/baselines/`, `results/figures/`.
+
+### Fixed-size baselines and oracle ceiling
+
+| System | F1 | EM | Faithfulness | Mean tokens |
+| --- | ---: | ---: | ---: | ---: |
+| Fixed (size 128) | 0.2128 | 0.1429 | 0.3626 | 1 651 |
+| Fixed (size 256) | 0.1701 | 0.0714 | 0.3635 | 1 654 |
+| Fixed (size 512) | 0.1695 | 0.0833 | 0.3140 | 1 638 |
+| Fixed (size 1024, retired) | 0.1573 | 0.0714 | 0.3092 | 1 962 |
+| **Oracle ceiling** | **0.2947** | — | — | — |
+
+The oracle assigns the best chunk size per question individually (by F1, tiebreaked by EM then smaller size). The oracle–baseline gap is **+8.19 F1 points**.
+
+### Per-type breakdown (oracle gap, test split)
+
+| Question type | n | Best baseline F1 | Oracle F1 | Gap |
+| --- | ---: | ---: | ---: | ---: |
+| Factoid | 28 | 0.486 (size 128) | 0.633 | **+14.63 pts** |
+| Multihop | 28 | 0.125 (size 256) | 0.155 | +3.02 pts |
+| Synthesis | 28 | 0.076 (size 512) | 0.097 | +2.05 pts |
+
+Factoid questions dominate both in count and in routable headroom. Multihop and synthesis have a small absolute gap and low absolute F1, meaning the routing problem on this corpus is effectively a *majority-class default (128) with selective factoid override*, not a balanced 3-way decision.
+
+### Router and sanity baseline
+
+| System | Mean F1 | Clf macro-F1 | Gap closure |
+| --- | ---: | ---: | ---: |
+| Fixed baseline (size 128) | 0.213 | — | 0.00 |
+| Type-aware heuristic | 0.229 | — | **+0.20** |
+| Trained router (MiniLM + LR) | 0.171 | 0.292 | **−0.51** |
+| Oracle ceiling | 0.295 | — | 1.00 |
+
+Gap closure = (router F1 − best baseline F1) / (oracle F1 − best baseline F1).
+
+**The trained router is a negative result.** It scores below the best fixed baseline. Three compounding causes:
+
+1. **Small training set** (237 examples). Classification macro-F1 drops from 0.416 on validation to 0.292 on test — the model does not generalise.
+2. **Narrow oracle gap** (+8.19 F1 points). Routing errors are cheaper to make than gains are to earn; even a few misrouted factoid questions erase the potential lift.
+3. **Type is the only useful signal.** The parameter-free type-aware heuristic — route each question to its type's best-on-average chunk size with no training — outperforms both the trained router and the fixed baseline. This confirms that the learned features (TF-IDF bigrams, MiniLM embeddings, handcrafted query features) capture nothing beyond what question type already encodes.
+
+---
+
+## Router track: what was built
+
+### Library modules (`rag_cr/router/`)
+
+| Module | Purpose |
+| --- | --- |
+| `features.py` | Three feature extractors behind a common `FeatureExtractor` interface: `TfidfExtractor` (bag-of-bigrams, up to 10 000 features), `MiniLMExtractor` (frozen `all-MiniLM-L6-v2` embeddings, 384-d, module-level singleton cache), `HandcraftedExtractor` (13-d deterministic: query length, question-word one-hot, heuristic NER count, question-type one-hot). Also `ConcatExtractor` for horizontal stacking. |
+| `models.py` | Three classifier wrappers behind a common `RouterModel` interface: `LogisticRouter` (sklearn LR with `class_weight="balanced"`), `SVMRouter` (linear SVM with CalibratedClassifierCV; falls back to softmax if any class has fewer than 3 samples), `LightGBMRouter` (LightGBM with `is_unbalance=True`, DataFrame-name warning suppressed). All implement `predict`, `predict_proba`, and `pickle`-roundtrip. |
+| `train.py` | `load_router_data` — loads (questions, types, oracle labels) from a split file, filters to the active action space. `run_cv_grid` — stratified k-fold CV across every (feature_set, classifier) pair; returns a tidy DataFrame. `rank_all_on_val` — re-fits each grid cell on the full training set and evaluates on the val set; returns a ranked list sorted by val macro-F1. |
+
+### Experiment scripts (`experiments/`)
+
+| Script | What it does | GPU needed |
+| --- | --- | --- |
+| `train_router.py` | Runs the full 3×3 CV grid (TF-IDF / MiniLM / Handcrafted × LogReg / SVM / LightGBM) with 5-fold stratified CV. Prints a CV summary table. Then applies **two-pass val selection**: top-3 cells by val macro-F1 are re-ranked by end-to-end val RAG F1 (full pipeline with predicted sizes); winner selected by RAG F1. Saves `artifacts/router/best.pkl` and `best_config.json`. | Yes (MiniLM embed + vLLM for RAG re-ranking) |
+| `run_router.py` | Loads `artifacts/router/best.pkl`, predicts chunk sizes on the test split, runs the full RAG pipeline for each prediction, computes F1/EM/gap-closure. Writes `results/runs/<ts>_router/metrics.json` and `predictions.jsonl`. | Yes (vLLM) |
+| `run_type_router.py` | Parameter-free sanity baseline. Reads the pre-built eval grid, computes per-type mean F1 by size, assigns each test question its type's best size, looks up F1 directly from the grid — **no new inference**. Writes `results/runs/<ts>_type_router/metrics.json` and `predictions.jsonl`. | No |
+| `make_router_figures.py` | Generates two figures: `fig_router_comparison.{pdf,png}` (bar chart: Oracle / Type-aware / Best baseline / Trained router) and `fig_router_per_type.{pdf,png}` (grouped bars per question type). Reads oracle_gap.json, router and type_router metrics/predictions. | No |
+
+All four scripts run as part of `make router`.
+
+### Two-pass model selection
+
+Standard selection by val macro-F1 alone is insufficient when the training distribution is imbalanced (82 % of oracle labels are class 128): a classifier that mostly predicts 128 can score high macro-F1 on val while harming the end-to-end RAG F1. The two-pass procedure fixes this:
+
+1. Run the full CV grid. Aggregate mean macro-F1 per (feature_set, classifier) cell.
+2. Re-fit each of the top-3 cells on the full training set, evaluate on val.
+3. Sort those 3 by **val RAG F1** (run the full pipeline with predicted sizes). Select the winner.
+
+Selected model: **MiniLM + logistic regression** (val macro-F1 = 0.416, val RAG F1 = 0.278).
+
+### Key design decisions
+
+- **Class-balanced loss everywhere.** `class_weight="balanced"` for LogReg and SVM; `is_unbalance=True` for LightGBM. Plain accuracy on val would select a model that always predicts 128.
+- **TF-IDF fitted inside each CV fold.** Fitting on the full training set before CV would leak the vocabulary distribution into val folds and inflate macro-F1. `run_cv_grid` re-fits the extractor per fold.
+- **`_latest()` regex guard in figures.** The glob `*_router` would also match `*_type_router` directory names. A `_RUN_RE` regex (`^\d{8}_\d{6}_(.+)$`) ensures exact tag matching.
+- **No 1024 in the action space.** See the "Action space" section above for the full rationale.
+
+### Committed artifacts
+
+| Path | Contents |
+| --- | --- |
+| `results/figures/fig_router_comparison.{pdf,png}` | Bar chart comparing all four systems |
+| `results/figures/fig_router_per_type.{pdf,png}` | Per-type F1 breakdown (factoid / multihop / synthesis) |
+| `results/figures/table_router_results.tex` | LaTeX table with router, type-aware, baseline, and oracle rows |
+
+---
+
+## Test suite
+
+Run with `make test` (alias for `pytest` from `rag-chunk-routing/`).
+
+### Coverage summary
+
+| Test file | What it covers | # tests |
+| --- | --- | --- |
+| `test_config.py` | Config loading from YAML | 1 |
+| `test_chunking.py` | Tokenizer-aware fixed-size chunking | ~15 |
+| `test_corpus.py` | Corpus I/O and metadata | ~8 |
+| `test_fusion.py` | RRF fusion logic | ~10 |
+| `test_io.py` | JSONL/JSON helpers, run-dir creation | ~15 |
+| `test_metrics.py` | EM, token-F1, faithfulness scorers | ~20 |
+| `test_oracle.py` | Oracle label derivation, tiebreak rules | 7 |
+| `test_qa_filter.py` | Primary-F1 check + LLM-judge filter (mocked) | 9 |
+| `test_qa_gen.py` | QA generation pipeline (mocked) | 14 |
+| `test_retrieval.py` | Single-scale and RRF retrieval | 26 |
+| `test_router.py` | Feature extractors, classifiers, CV grid, val selection | 46 |
+| `test_splits.py` | Stratified train/val/test split | 7 |
+| `test_type_router.py` | Type-aware baseline, `_gap_closure`, `_latest`, figure smoke tests | 28 |
+| `test_utils.py` | Shared utilities (gap closure, oracle gap reader) | ~10 |
+| **Total** | | **≈ 167** |
+
+### Markers
+
+- `integration` — requires built artifacts on disk (e.g. `test_retrieval.py` needs `artifacts/indices/` from `make indices`). Skip with `pytest -m "not integration"`.
+- `slow` — loads large models (MiniLM). Skip with `pytest -m "not slow"`.
+
+### What is not tested
+
+Thin wrappers (`logging`, `seed`, `tokens`, `types`) and backends that require external services (`generation`, `embedding`, `indexing`, `pipeline`) have no unit tests. Experiment scripts in `experiments/` are not unit-tested; they are exercised end-to-end via the `make` pipeline. `qa_gen` and `qa_filter` are tested with the LLM call monkeypatched.
