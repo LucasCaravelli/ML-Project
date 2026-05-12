@@ -69,7 +69,7 @@ def _figure_router_comparison(out_dir: Path, artifacts_dir: Path, results_dir: P
     if not router_path:
         log.warning("No router run found — skipping comparison figure")
         return
-    router_f1: float = _load_json(router_path)["mean_f1"]
+    router_f1: float = _load_json(router_path)["f1"]
 
     type_router_path = _latest(results_dir, "type_router", "metrics.json")
     type_router_f1: float | None = (
