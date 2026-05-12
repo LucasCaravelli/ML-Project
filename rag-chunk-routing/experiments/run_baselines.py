@@ -1,3 +1,13 @@
+"""Compute fixed-size baseline metrics from the eval grid.
+
+Aggregates per-(chunk_size, type) means from artifacts/oracle/eval_grid.jsonl,
+ranks the fixed-size systems, and computes the oracle gap (best fixed baseline
+vs. oracle upper bound). Writes per-size, per-type, and gap-summary JSON
+artifacts under artifacts/baselines/. No new model inference — pure aggregation.
+
+Run from rag-chunk-routing/:
+    python experiments/run_baselines.py --config configs/base.yaml
+"""
 from __future__ import annotations
 
 import argparse
@@ -98,16 +108,37 @@ def _size_distribution(rows_for_split: list[dict]) -> dict[int, dict[str, float]
 
 def _verdict(gap: float, max_share: float) -> str:
     if gap >= 3.0 and max_share < 0.40:
-        return "HEALTHY — oracle gap is real and size distribution is non-trivial. Proceed to Stage B."
+        return (
+            "HEALTHY -- oracle gap is real and size distribution is non-trivial. "
+            "Proceed to Stage B."
+        )
     if gap < 1.0 or max_share > 0.60:
-        return ("PIVOT — gap too small or one chunk size dominates. "
+        return ("PIVOT -- gap too small or one chunk size dominates. "
                 "The premise is weaker than assumed; do not run Stage B. "
                 "Discuss with the team before any router work.")
-    return ("MARGINAL — gap and/or distribution are borderline. "
+    return ("MARGINAL -- gap and/or distribution are borderline. "
             "Re-evaluate the project framing with the team before committing to router work.")
 
 
-def main(config: Config) -> None:
+def _parse_sizes(arg: str) -> list[int]:
+    parts = [p.strip() for p in arg.split(",") if p.strip()]
+    if not parts:
+        raise argparse.ArgumentTypeError("--restrict-sizes cannot be empty")
+    try:
+        sizes = [int(p) for p in parts]
+    except ValueError as exc:
+        raise argparse.ArgumentTypeError(
+            f"--restrict-sizes must be a comma-separated list of integers, got {arg!r}"
+        ) from exc
+    return sizes
+
+
+def main(
+    config: Config,
+    restrict_sizes: list[int] | None = None,
+    out_suffix: str = "",
+) -> None:
+    """Aggregate eval-grid metrics into per-size, per-type, and oracle-gap baselines."""
     log = get_logger(__name__)
     artifacts_dir = config.paths.artifacts_dir
 
@@ -120,22 +151,38 @@ def main(config: Config) -> None:
     grid = read_jsonl(grid_path)
     log.info("Loaded %d eval-grid rows from %s", len(grid), grid_path)
 
+    # Default: report on the active action space declared in chunking.sizes.
+    # Anything else in the eval grid (e.g. the retired size=1024 rows that
+    # remain on disk for the ablation) is filtered out so the canonical
+    # baselines / oracle gap reflect what the router will actually see.
+    # Pass --restrict-sizes to override (e.g. include 1024 for an ablation).
+    allowed = set(restrict_sizes) if restrict_sizes is not None else set(config.chunking.sizes)
+    before = len(grid)
+    grid = [r for r in grid if int(r["chunk_size"]) in allowed]
+    log.info(
+        "Action space sizes=%s: %d -> %d rows",
+        sorted(allowed), before, len(grid),
+    )
+
     test_rows = [r for r in grid if r.get("split") == "test"]
     if not test_rows:
-        log.warning("No rows with split='test' in eval grid — gap will be skipped.")
+        log.warning("No rows with split='test' in eval grid; gap will be skipped.")
 
     out_dir = _baselines_dir(artifacts_dir)
 
+    def _named(stem: str) -> Path:
+        return out_dir / f"{stem}{out_suffix}.json"
+
     # 1. Per-size baseline summary on test
     per_size = _per_size_baseline(test_rows)
-    write_json(out_dir / "test_summary.json", per_size)
+    write_json(_named("test_summary"), per_size)
 
     # 2. Size distribution per split
     by_split: dict[str, list[dict]] = defaultdict(list)
     for r in grid:
         by_split[r.get("split", "unknown")].append(r)
     size_dist = {split: _size_distribution(rows) for split, rows in sorted(by_split.items())}
-    write_json(out_dir / "size_distribution.json", size_dist)
+    write_json(_named("size_distribution"), size_dist)
 
     # 3. Oracle gap on test (overall + per-type)
     oracle_gap_payload: dict[str, Any] = {}
@@ -146,6 +193,7 @@ def main(config: Config) -> None:
         best_baseline_f1 = best_size_baseline["f1"] if best_size_baseline else 0.0
         gap_f1 = oracle_mean_test - best_baseline_f1
         oracle_gap_payload = {
+            "action_space": sorted(allowed),
             "n_questions_test": len(oracle_per_qa),
             "oracle_f1_mean": oracle_mean_test,
             "best_baseline_f1": best_baseline_f1,
@@ -156,7 +204,7 @@ def main(config: Config) -> None:
             "gap_f1_points": gap_f1 * 100,
             "per_type": _per_type_gap(test_rows),
         }
-        write_json(out_dir / "oracle_gap.json", oracle_gap_payload)
+        write_json(_named("oracle_gap"), oracle_gap_payload)
 
     # ---- Pretty-printed report ----
     print()
@@ -167,7 +215,10 @@ def main(config: Config) -> None:
     print("\n[Per-size baselines on test]")
     if per_size:
         for size, m in per_size.items():
-            print(f"  size={size:>4}  n={m['n']:>3}  F1={m['f1']:.4f}  EM={m['em']:.4f}  faith={m['faithfulness']:.4f}")
+            print(
+                f"  size={size:>4}  n={m['n']:>3}  F1={m['f1']:.4f}  "
+                f"EM={m['em']:.4f}  faith={m['faithfulness']:.4f}"
+            )
     else:
         print("  (no test rows)")
 
@@ -181,22 +232,32 @@ def main(config: Config) -> None:
         best_size = oracle_gap_payload["best_baseline_size"]
         print("\n[Oracle gap on test]")
         print(f"  oracle F1 (mean per-qa max):     {oracle_gap_payload['oracle_f1_mean']:.4f}")
-        print(f"  best fixed-size baseline F1:     {oracle_gap_payload['best_baseline_f1']:.4f}  (size={best_size})")
+        print(
+            f"  best fixed-size baseline F1:     "
+            f"{oracle_gap_payload['best_baseline_f1']:.4f}  (size={best_size})"
+        )
         print(f"  GAP:                             {gap_pts:+.2f} F1 points")
 
         print("\n[Per-type oracle gap on test]")
         for qtype, m in oracle_gap_payload["per_type"].items():
-            print(f"  {qtype:>10}  n={m['n_questions']:>3}  oracle={m['oracle_f1']:.4f}  best={m['best_baseline_f1']:.4f}  gap={m['gap']*100:+.2f} pts")
+            print(
+                f"  {qtype:>10}  n={m['n_questions']:>3}  "
+                f"oracle={m['oracle_f1']:.4f}  best={m['best_baseline_f1']:.4f}  "
+                f"gap={m['gap']*100:+.2f} pts"
+            )
 
         # Verdict using the test-split distribution if available, else first split.
         max_share = max(
-            (d["share"] for d in size_dist.get("test", next(iter(size_dist.values()), {})).values()),
+            (
+                d["share"]
+                for d in size_dist.get("test", next(iter(size_dist.values()), {})).values()
+            ),
             default=1.0,
         )
         verdict = _verdict(gap_pts, max_share)
         print("\n[Verdict]")
         print(f"  gap={gap_pts:+.2f} pts   max single-size share (test)={max_share:.1%}")
-        print(f"  → {verdict}")
+        print(f"  -> {verdict}")
 
     print("\n" + "=" * 72)
     print(f"Wrote: {out_dir}")
@@ -206,5 +267,25 @@ def main(config: Config) -> None:
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--config", default="configs/base.yaml")
+    parser.add_argument(
+        "--restrict-sizes",
+        type=_parse_sizes,
+        default=None,
+        help=(
+            "Comma-separated list of chunk sizes to keep when aggregating "
+            "(e.g. '128,256,512,1024' to include the retired 1024 rows for an "
+            "ablation). Default: use chunking.sizes from the config, which is "
+            "the active router action space."
+        ),
+    )
+    parser.add_argument(
+        "--out-suffix",
+        default="",
+        help=(
+            "Suffix appended to the output JSON filenames (e.g. '_full' "
+            "produces oracle_gap_full.json). Use this to keep ablation "
+            "outputs alongside the canonical reports without overwriting."
+        ),
+    )
     args = parser.parse_args()
-    main(load_config(args.config))
+    main(load_config(args.config), restrict_sizes=args.restrict_sizes, out_suffix=args.out_suffix)

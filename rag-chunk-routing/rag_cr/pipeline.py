@@ -1,3 +1,5 @@
+"""End-to-end retrieve→generate→score orchestration for a configured system."""
+
 from __future__ import annotations
 
 from pathlib import Path

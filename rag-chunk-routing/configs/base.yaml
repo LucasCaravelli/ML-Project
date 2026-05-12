@@ -1,5 +1,3 @@
-# TODO: Centralize every hyperparameter used anywhere in the pipeline (chunking, embedding, retrieval, generation, QA generation, router). No default values should live in Python code.
-
 project:
   name: rag-chunk-routing
   seed: 42
@@ -10,7 +8,14 @@ paths:
   results_dir: results
 
 chunking:
-  sizes: [128, 256, 512, 1024]
+  # Active action space for the router and the systems that consume splits.
+  # 1024 was dropped on 2026-05-01 after Phase 2's eval grid showed it was the
+  # worst single-size baseline (F1=0.157 vs 0.213 for 128) and the rarest
+  # oracle winner (~5-9 percent across splits). The 1024 overlap is left in
+  # place so the eval grid and chunked artifacts can still be read for the
+  # ablation that motivates the choice; see README "Action space: why we
+  # dropped chunk size 1024".
+  sizes: [128, 256, 512]
   overlaps:
     128: 16
     256: 32
@@ -26,6 +31,14 @@ embedding:
 retrieval:
   top_k: 5
   fusion_constant: 60
+  # Per-size k chosen so total context tokens are roughly equal across sizes
+  # (~2.5K tokens). Without this, top_k=5 starves 128 (640 tok) and floods
+  # 1024 (5120 tok), biasing the oracle gap.
+  top_k_by_size:
+    128: 20
+    256: 10
+    512: 5
+    1024: 3
 
 splits:
   ratios: {train: 0.6, val: 0.2, test: 0.2}

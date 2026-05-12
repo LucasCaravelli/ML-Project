@@ -1,3 +1,13 @@
+"""Filter raw QA into validated / rejected sets via primary-only F1 and a judge LLM.
+
+Two-stage: (1) a primary-only F1 threshold rejects QA pairs the answer
+generator cannot handle even when given the source chunk; (2) an LLM-judge
+pass validates the survivors. Optionally re-invokes generation to top up
+type quotas when the validated set is below target.
+
+Run from rag-chunk-routing/:
+    python experiments/filter_qa.py --config configs/base.yaml [--no-topup]
+"""
 from __future__ import annotations
 
 import argparse
@@ -70,7 +80,21 @@ def _next_qa_id_offset(*paths: Path) -> int:
     return max_idx + 1
 
 
+def _all_qa_ids(*paths: Path) -> set[str]:
+    """Collect every qa_id already on disk so generation can skip collisions."""
+    ids: set[str] = set()
+    for path in paths:
+        if not path.exists():
+            continue
+        for row in read_jsonl(path):
+            qa_id = row.get("qa_id")
+            if isinstance(qa_id, str) and qa_id.startswith("qa_"):
+                ids.add(qa_id)
+    return ids
+
+
 def run_pipeline(config: Config, *, do_topup: bool) -> None:
+    """Run the two-stage filter (primary-only F1 + judge LLM) with optional top-up."""
     set_seed(config.project.seed)
     load_dotenv()
 
@@ -122,6 +146,7 @@ def run_pipeline(config: Config, *, do_topup: bool) -> None:
         new_pairs: list[QAPair] = []
         if do_topup and any(d > 0 for d in deficits.values()):
             qa_id_offset = _next_qa_id_offset(raw_path, validated_path, rejected_path)
+            existing_qa_ids = _all_qa_ids(raw_path, validated_path, rejected_path)
             validated_chunk_ids = {
                 p["source_chunk_id"]
                 for p in validated_pairs
@@ -140,8 +165,13 @@ def run_pipeline(config: Config, *, do_topup: bool) -> None:
                     qa_id_offset=qa_id_offset,
                     exclude_chunk_ids=validated_chunk_ids,
                     type_override=qtype,
+                    existing_qa_ids=existing_qa_ids,
                 )
-                qa_id_offset += len(generated)
+                for p in generated:
+                    existing_qa_ids.add(p["qa_id"])
+                    idx = int(p["qa_id"][3:])
+                    if idx + 1 > qa_id_offset:
+                        qa_id_offset = idx + 1
                 new_pairs.extend(generated)
             if new_pairs:
                 _append_jsonl(raw_path, cast(list[dict[str, Any]], new_pairs))

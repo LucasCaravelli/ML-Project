@@ -1,4 +1,4 @@
-# TODO: Load configs/base.yaml into a typed configuration object that the rest of the package consumes.
+"""Typed dataclass config loaded from YAML; the canonical hyperparameter source."""
 
 from __future__ import annotations
 
@@ -40,6 +40,15 @@ class EmbeddingConfig:
 class RetrievalConfig:
     top_k: int
     fusion_constant: int
+    # Optional per-size override so each chunk size sees a comparable amount
+    # of total context (~k * size tokens). Falls back to top_k when missing.
+    top_k_by_size: dict[int, int] | None = None
+
+    def k_for_size(self, size: int) -> int:
+        """Return the per-size top-k, falling back to ``top_k`` when no override is set."""
+        if self.top_k_by_size and size in self.top_k_by_size:
+            return self.top_k_by_size[size]
+        return self.top_k
 
 
 @dataclass(frozen=True)
@@ -131,6 +140,7 @@ def _read_yaml(config_path: Path) -> dict[str, Any]:
 
 
 def load_config(config_path: str | Path = "configs/base.yaml") -> Config:
+    """Load and validate a YAML config file into a typed ``Config`` dataclass."""
     config_path = Path(config_path)
     raw = _read_yaml(config_path)
 
@@ -143,7 +153,15 @@ def load_config(config_path: str | Path = "configs/base.yaml") -> Config:
         ),
         chunking=ChunkingConfig(**raw["chunking"]),
         embedding=EmbeddingConfig(**raw["embedding"]),
-        retrieval=RetrievalConfig(**raw["retrieval"]),
+        retrieval=RetrievalConfig(
+            top_k=raw["retrieval"]["top_k"],
+            fusion_constant=raw["retrieval"]["fusion_constant"],
+            top_k_by_size=(
+                {int(k): int(v) for k, v in raw["retrieval"]["top_k_by_size"].items()}
+                if raw["retrieval"].get("top_k_by_size")
+                else None
+            ),
+        ),
         splits=SplitsConfig(**raw["splits"]),
         generation=GenerationConfig(**raw["generation"]),
         qa=QAConfig(

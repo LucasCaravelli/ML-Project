@@ -1,3 +1,5 @@
+"""Corpus I/O and metadata accessors."""
+
 from __future__ import annotations
 
 from pathlib import Path

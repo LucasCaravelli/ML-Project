@@ -1,5 +1,7 @@
 You are answering a question for a retrieval-augmented generation system.
 
+Your answer will be compared against a gold answer that was produced under strict canonical-phrasing rules. To score well, your answer must follow the SAME shape and wording conventions as the gold answer.
+
 Use only the retrieved context below. Do not use outside knowledge. If the retrieved context does not provide enough information to answer the question cleanly and directly, say exactly: NOT_ENOUGH_INFORMATION
 
 Question:
@@ -7,19 +9,35 @@ Question:
 {question}
 >>>
 
-Retrieved context:
+Retrieved context (numbered passages):
 <<<
 {retrieved_context}
 >>>
 
-Instructions:
-1. Answer using only the retrieved context.
-2. Do not add background knowledge, assumptions, or speculation.
-3. If the answer is not clearly supported by the retrieved context, output exactly: NOT_ENOUGH_INFORMATION
-4. Keep the answer concise and directly responsive to the question.
-5. For fact-based questions, prefer short exact answers when supported.
-6. For questions requiring synthesis, give a brief integrated answer grounded in the retrieved context.
-7. Do not mention the context, passage, or retrieval process.
-8. Do not hedge with phrases like "Based on the context" or "The passage says".
+Expected answer shape (HARD caps — count the words):
+- factoid (e.g. "what/who/when/where/which X"): at most 5 words. An extractive span lifted from the retrieved context. Not a sentence.
+- multihop (combines facts across passages, e.g. "what is the relation between X and Y"): at most 15 words. A short phrase combining facts across passages. Not a sentence.
+- synthesis (asks for an integrated summary or comparison across passages): at most 25 words. A tight phrase (not a paragraph) integrating facts. No framing words like "The study shows", "According to", "The text describes".
 
-Output only the answer text, with no quotation marks, JSON, or extra commentary.
+Infer the type from the question; if uncertain, prefer the shorter cap.
+
+General shape rules for all types:
+- Output the SHORTEST phrase fully supported by the retrieved context that answers the question.
+- Prefer noun phrases, numeric values, named entities, or short predicates. Avoid full sentences.
+- Strip filler, hedging, articles where natural, and any wording not required to answer the question.
+- Use wording taken directly from the retrieved context wherever possible. Reuse the exact terms, names, numbers, and phrasing that appear in the passages. Do not paraphrase, rename, or translate into synonyms. Only deviate from the source wording when strictly necessary to merge facts across passages.
+
+Hard requirements:
+1. The answer must be fully supported by the retrieved context only. Do not add facts, interpretations, background context, or wording that is not justified by the passages.
+2. Do not hedge or add meta-commentary. Produce only the answer.
+3. If the context does not unambiguously support a clean answer, output exactly: NOT_ENOUGH_INFORMATION
+4. Obey the word caps strictly. If you cannot fit a correct answer within the cap, output NOT_ENOUGH_INFORMATION rather than exceeding it.
+5. Do not include unnecessary details beyond what the question asks.
+6. For factoid, prefer the exact wording from the most relevant passage unless minor normalization improves clarity.
+7. For multihop, the answer must reflect information from at least two passages; do not answer using a single passage alone.
+8. For synthesis, write a focused integrated phrase, not a paragraph or generic summary.
+9. Do not invent names, numbers, entities, relations, or causal claims.
+10. If multiple phrasings are supported, choose the shortest one that is still canonical and unambiguous.
+11. Do not mention the context, passages, or retrieval process. Do not say "Based on the context" or "The passage says".
+
+Output only the answer text on a single line, with no quotation marks, no JSON, no code fences, no extra commentary.

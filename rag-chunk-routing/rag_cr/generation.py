@@ -1,3 +1,5 @@
+"""Answer generation backends (vLLM / ollama) behind a single ``generate`` interface."""
+
 from __future__ import annotations
 
 import re
@@ -68,7 +70,7 @@ def _get_vllm(model_name: str) -> Any:
         _VLLM_CACHE[model_name] = LLM(
             model=model_name,
             dtype="bfloat16",
-            max_model_len=4096,
+            max_model_len=8192,
             gpu_memory_utilization=0.85,
         )
     return _VLLM_CACHE[model_name]
@@ -82,9 +84,12 @@ def _generate_vllm(prompts: list[str], cfg: Config) -> list[str]:
         temperature=cfg.generation.temperature,
         max_tokens=cfg.generation.max_new_tokens,
     )
-    outputs = llm.generate(prompts, params)
-    by_prompt = {o.prompt: o.outputs[0].text.strip() for o in outputs}
-    return [by_prompt[p] for p in prompts]
+    # Qwen2.5-Instruct expects the chat template (<|im_start|>...). Calling
+    # llm.generate() with raw text bypasses instruction tuning and degrades
+    # answer quality; llm.chat() applies the tokenizer's chat template.
+    conversations = [[{"role": "user", "content": p}] for p in prompts]
+    outputs = llm.chat(conversations, params)
+    return [o.outputs[0].text.strip() for o in outputs]
 
 
 def _generate_ollama(prompts: list[str], cfg: Config) -> list[str]:
