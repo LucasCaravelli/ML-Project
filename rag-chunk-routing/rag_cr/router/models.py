@@ -44,12 +44,16 @@ class RouterModel(Protocol):
 
 
 class LogisticRouter:
-    """Logistic regression classifier with balanced class weights."""
+    """Logistic regression classifier."""
 
     name = "logreg"
 
     def __init__(
-        self, C: float = _LOGREG_C, max_iter: int = _LOGREG_MAX_ITER, seed: int = 42,
+        self,
+        C: float = _LOGREG_C,
+        max_iter: int = _LOGREG_MAX_ITER,
+        seed: int = 42,
+        class_weight: str | None = None,
     ) -> None:
         from sklearn.linear_model import LogisticRegression
 
@@ -57,7 +61,7 @@ class LogisticRouter:
             C=C,
             max_iter=max_iter,
             random_state=seed,
-            class_weight="balanced",
+            class_weight=class_weight,
         )
 
     def fit(self, features: np.ndarray, labels: np.ndarray) -> None:
@@ -95,7 +99,7 @@ class LogisticRouter:
 
 
 class SVMRouter:
-    """Calibrated linear SVM classifier with balanced class weights.
+    """Calibrated linear SVM classifier.
 
     Uses CalibratedClassifierCV (cv folds) when enough samples are available per
     class; falls back to softmax over the SVM decision scores otherwise.
@@ -103,9 +107,10 @@ class SVMRouter:
 
     name = "svm_linear"
 
-    def __init__(self, C: float = _SVM_C, seed: int = 42) -> None:
+    def __init__(self, C: float = _SVM_C, seed: int = 42, class_weight: str | None = None) -> None:
         self._C = C
         self._seed = seed
+        self._class_weight = class_weight
         self._base = None   # LinearSVC, always fitted
         self._calib = None  # CalibratedClassifierCV, fitted when possible
 
@@ -118,12 +123,16 @@ class SVMRouter:
         min_count = int(counts.min())
         cv = min(_SVM_CALIB_CV, min_count)
 
-        base = LinearSVC(C=self._C, class_weight="balanced", random_state=self._seed)
+        base = LinearSVC(C=self._C, class_weight=self._class_weight, random_state=self._seed)
         base.fit(features, labels)
         self._base = base
 
         if cv >= 2:
-            new_base = LinearSVC(C=self._C, class_weight="balanced", random_state=self._seed)
+            new_base = LinearSVC(
+                C=self._C,
+                class_weight=self._class_weight,
+                random_state=self._seed,
+            )
             self._calib = CalibratedClassifierCV(new_base, cv=cv)
             self._calib.fit(features, labels)
         else:
@@ -169,7 +178,7 @@ class SVMRouter:
 
 
 class LightGBMRouter:
-    """LightGBM gradient-boosted classifier with balanced class weights."""
+    """LightGBM gradient-boosted classifier."""
 
     name = "lightgbm"
 
@@ -178,6 +187,7 @@ class LightGBMRouter:
         n_estimators: int = _LGB_N_ESTIMATORS,
         num_leaves: int = _LGB_NUM_LEAVES,
         seed: int = 42,
+        class_weight: str | None = None,
     ) -> None:
         from lightgbm import LGBMClassifier
 
@@ -185,7 +195,7 @@ class LightGBMRouter:
             n_estimators=n_estimators,
             num_leaves=num_leaves,
             random_state=seed,
-            class_weight="balanced",
+            class_weight=class_weight,
             verbose=-1,
         )
 
@@ -233,10 +243,15 @@ class LightGBMRouter:
 
 def build_router_model(name: str, config=None, seed: int = 42) -> RouterModel:
     """Construct a named router model (logreg, svm_linear, lightgbm)."""
+    class_weight = (
+        getattr(getattr(config, "router", None), "class_weight", None)
+        if config is not None
+        else None
+    )
     if name == "logreg":
-        return LogisticRouter(seed=seed)
+        return LogisticRouter(seed=seed, class_weight=class_weight)
     if name == "svm_linear":
-        return SVMRouter(seed=seed)
+        return SVMRouter(seed=seed, class_weight=class_weight)
     if name == "lightgbm":
-        return LightGBMRouter(seed=seed)
+        return LightGBMRouter(seed=seed, class_weight=class_weight)
     raise ValueError(f"Unknown router model: {name!r}. Valid: logreg, svm_linear, lightgbm")

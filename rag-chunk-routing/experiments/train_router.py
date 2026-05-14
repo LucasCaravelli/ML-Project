@@ -16,8 +16,11 @@ import json
 import pickle
 from pathlib import Path
 
+import numpy as np
+
 from rag_cr import Config, load_config, set_seed
 from rag_cr.io import read_jsonl
+from rag_cr.router.predict import predict_with_threshold
 from rag_cr.router.train import (
     load_router_data,
     rank_all_on_val,
@@ -39,6 +42,8 @@ def _val_rag_f1(
     val_types: list[str],
     val_rows: list[dict],
     config: Config,
+    threshold: float | None = None,
+    majority_class: int = 128,
 ) -> float | None:
     """Run RAG on val with predicted sizes; return mean F1, or None if pipeline unavailable."""
     try:
@@ -48,7 +53,7 @@ def _val_rag_f1(
         return None
 
     X_val = extractor.transform(val_questions, val_types)
-    predictions = classifier.predict(X_val)
+    predictions = predict_with_threshold(classifier, X_val, majority_class, threshold)
 
     systems: dict = {}
     for size in set(int(p) for p in predictions):
@@ -162,9 +167,51 @@ def main(config: Config, config_path: str) -> None:
         print("\n  RAG pipeline unavailable — selected by val macro-F1.")
     print()
 
+    # --- Threshold sweep on the winner only ---
+    majority_class = config.router.majority_class
+    thresholds = [None, 0.40, 0.45, 0.50, 0.55, 0.60, 0.65, 0.70]
+    X_val_winner = best_ext.transform(val_q, val_t)
+
+    print("  Threshold sweep on winner (val RAG F1):")
+    print(f"  {'threshold':>10}  {'val RAG F1':>12}  {'frac overridden':>15}")
+    print(f"  {'-'*10}  {'-'*12}  {'-'*15}")
+
+    threshold_results: list[tuple[float, float | None]] = []  # (val_rag_f1, threshold)
+    for thr in thresholds:
+        preds = predict_with_threshold(best_clf, X_val_winner, majority_class, thr)
+        frac_overridden = float(np.mean(preds != majority_class))
+        thr_rag_f1 = _val_rag_f1(
+            best_ext, best_clf, val_q, val_t, val_rows_filtered, config,
+            threshold=thr, majority_class=majority_class,
+        )
+        thr_label = f"{thr:.2f}" if thr is not None else "None"
+        rag_label = f"{thr_rag_f1:.4f}" if thr_rag_f1 is not None else "unavail"
+        print(f"  {thr_label:>10}  {rag_label:>12}  {frac_overridden:>15.4f}")
+        if thr_rag_f1 is not None:
+            threshold_results.append((thr_rag_f1, thr))
+
+    best_threshold: float | None = None
+    if threshold_results:
+        # pick threshold maximising val RAG F1; break ties toward larger threshold
+        best_threshold = max(
+            threshold_results,
+            key=lambda x: (x[0], x[1] if x[1] is not None else -1.0),
+        )[1]
+        best_thr_f1 = max(r[0] for r in threshold_results if r[1] == best_threshold)
+        print(f"\n  Best threshold: {best_threshold!r}  (val RAG F1={best_thr_f1:.4f})")
+    else:
+        print("\n  RAG pipeline unavailable for threshold sweep — keeping threshold=None.")
+    print()
+
+    best_meta = {**best_meta, "threshold": best_threshold, "majority_class": majority_class}
+
     pkl_path = out_dir / "best.pkl"
     with pkl_path.open("wb") as f:
-        pickle.dump({"extractor": best_ext, "classifier": best_clf, "config": best_meta}, f)
+        pickle.dump(
+            {"extractor": best_ext, "classifier": best_clf, "config": best_meta,
+             "threshold": best_threshold},
+            f,
+        )
     print(f"Best model saved     → {pkl_path}")
 
     config_json_path = out_dir / "best_config.json"
@@ -182,6 +229,8 @@ def main(config: Config, config_path: str) -> None:
         print(f"  val RAG F1           : {best_meta['val_rag_f1']:.4f}")
     print(f"  val balanced acc     : {best_meta['val_balanced_accuracy']:.4f}")
     print(f"  val accuracy         : {best_meta['val_accuracy']:.4f}")
+    print(f"  threshold            : {best_meta['threshold']!r}")
+    print(f"  majority_class       : {best_meta['majority_class']}")
 
 
 if __name__ == "__main__":
