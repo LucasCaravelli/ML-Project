@@ -103,6 +103,9 @@ class RouterConfig:
     feature_sets: list[str]
     model_names: list[str]
     cv_folds: int
+    class_weight: str | None = None
+    majority_class: int = 128
+    threshold: float | None = None
 
 
 @dataclass(frozen=True)
@@ -183,7 +186,14 @@ def load_config(config_path: str | Path = "configs/base.yaml") -> Config:
                 max_topup_rounds=raw["qa"]["generation"]["max_topup_rounds"],
             ),
         ),
-        router=RouterConfig(**raw["router"]),
+        router=RouterConfig(
+            feature_sets=raw["router"]["feature_sets"],
+            model_names=raw["router"]["model_names"],
+            cv_folds=raw["router"]["cv_folds"],
+            class_weight=raw["router"].get("class_weight", None),
+            majority_class=raw["router"].get("majority_class", 128),
+            threshold=raw["router"].get("threshold", None),
+        ),
         prompts=PromptsConfig(
             qa_generation_factoid=Path(raw["prompts"]["qa_generation_factoid"]),
             qa_generation_multihop=Path(raw["prompts"]["qa_generation_multihop"]),

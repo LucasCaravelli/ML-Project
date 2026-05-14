@@ -80,6 +80,9 @@ router:
   feature_sets: [tfidf, minilm, handcrafted]
   model_names: [logreg, svm_linear, lightgbm]
   cv_folds: 5
+  class_weight: null          # was implicitly "balanced"; now natural prior
+  majority_class: 128
+  threshold: null             # filled in by train_router.py after tuning
 
 prompts:
   qa_generation_factoid: prompts/qa_generation_factoid.txt

@@ -23,6 +23,7 @@ from sklearn.metrics import balanced_accuracy_score, f1_score
 
 from rag_cr import Config, load_config, set_seed
 from rag_cr.io import create_run_dir, read_jsonl, write_json, write_jsonl
+from rag_cr.router.predict import predict_with_threshold
 from rag_cr.router.train import load_router_data
 from rag_cr.utils import gap_closure, git_hash, read_oracle_gap
 
@@ -91,7 +92,13 @@ def main(config: Config, config_path: str) -> None:
 
     print("Extracting features and predicting chunk sizes …")
     X_test = extractor.transform(test_q, test_t)
-    predictions: np.ndarray = classifier.predict(X_test)
+    majority_class: int = best_config_meta.get(
+        "majority_class", config.router.majority_class
+    )
+    threshold = best_config_meta.get("threshold", config.router.threshold)
+    predictions: np.ndarray = predict_with_threshold(
+        classifier, X_test, majority_class, threshold
+    )
 
     y_true = np.array(test_l)
     y_pred = predictions
@@ -181,6 +188,8 @@ def main(config: Config, config_path: str) -> None:
 
     gap = gap_closure(mean_f1 or 0.0, baseline_f1, oracle_f1) if mean_f1 is not None else None
 
+    fraction_predicted_non_majority = float(np.mean(predictions != majority_class))
+
     metrics: dict[str, Any] = {
         "mean_f1": mean_f1,
         "mean_em": mean_em,
@@ -192,6 +201,9 @@ def main(config: Config, config_path: str) -> None:
         "n_test_examples": len(filtered_ids),
         "best_baseline_mean_f1_ref": baseline_f1,
         "oracle_mean_f1_ref": oracle_f1,
+        "threshold": threshold,
+        "majority_class": majority_class,
+        "fraction_predicted_non_majority": fraction_predicted_non_majority,
     }
 
     # --- Write artifacts ---
@@ -215,6 +227,9 @@ def main(config: Config, config_path: str) -> None:
     print()
     print("Key metrics:")
     print(f"  macro_f1_router_classification : {clf_macro_f1:.4f}")
+    print(f"  threshold                      : {threshold!r}")
+    print(f"  majority_class                 : {majority_class}")
+    print(f"  fraction_predicted_non_majority: {fraction_predicted_non_majority:.4f}")
     if gap is not None:
         print(f"  gap_closure_fraction           : {gap:.4f}")
     else:
